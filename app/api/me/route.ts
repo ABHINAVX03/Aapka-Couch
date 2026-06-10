@@ -96,9 +96,9 @@ export async function PATCH(req: Request) {
         if (val === undefined) continue
         // Numeric fields
         if ([
-          'age','height_cm','weight_kg','body_fat_percent','visceral_fat','waist_inches',
-          'upper_abdomen_inches','hips_inches','body_age','rmr_estimated','daily_budget',
-          'sleep_hours','stress_level','target_bf_percent','timeframe_weeks'
+          'age', 'height_cm', 'weight_kg', 'body_fat_percent', 'visceral_fat', 'waist_inches',
+          'upper_abdomen_inches', 'hips_inches', 'body_age', 'rmr_estimated', 'daily_budget',
+          'sleep_hours', 'stress_level', 'target_bf_percent', 'timeframe_weeks'
         ].includes(key)) {
           const n = asNumber(val)
           out[key] = isNaN(n) ? null : (n as any)
@@ -145,8 +145,9 @@ export async function PATCH(req: Request) {
 
       if (profileError) {
         console.error('Profile update error:', profileError)
+        // 👇 TEMPORARY – return the exact error so you can see it
         return NextResponse.json(
-          { error: 'Failed to update profile' },
+          { error: 'Failed to update profile', details: profileError.message },
           { status: 500 }
         )
       }
