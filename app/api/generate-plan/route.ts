@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
-import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { supabaseAdmin } from '@/lib/supabase'
 import { hashToken } from '@/lib/otp'
 
 const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
@@ -90,4 +87,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
-import { hashToken } from '@/lib/otp'

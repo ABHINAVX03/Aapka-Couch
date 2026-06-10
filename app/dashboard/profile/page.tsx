@@ -94,6 +94,11 @@ export default function ProfileEditPage() {
   const [regenerating, setRegenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [userEmail, setUserEmail] = useState('')
+  const [deleteEmail, setDeleteEmail] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null)
 
   useEffect(() => { fetchProfile() }, [])
 
@@ -103,6 +108,7 @@ export default function ProfileEditPage() {
       const res = await fetch('/api/me')
       if (!res.ok) { router.push('/login'); return }
       const { user } = await res.json()
+      setUserEmail(user?.email ?? '')
       const p = user?.profile
       if (p) {
         setForm({
@@ -204,6 +210,42 @@ export default function ProfileEditPage() {
     }
   }
 
+  const handleDeleteAccount = async () => {
+    setDeleteError(null)
+    setDeleteSuccess(null)
+
+    if (!deleteEmail.trim()) {
+      setDeleteError('Please enter your email address to confirm account deletion.')
+      return
+    }
+
+    if (deleteEmail.trim().toLowerCase() !== userEmail.toLowerCase()) {
+      setDeleteError('The email does not match your account email.')
+      return
+    }
+
+    setDeleting(true)
+    try {
+      const res = await fetch('/api/delete-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_confirmation: deleteEmail.trim() }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error || 'Failed to delete account')
+      }
+
+      setDeleteSuccess('Your account has been deleted. Redirecting to login...')
+      router.replace('/login')
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Account deletion failed')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (loading) return (
     <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
       Loading profile...
@@ -243,6 +285,32 @@ export default function ProfileEditPage() {
       <main className="max-w-2xl mx-auto px-4 md:px-6 py-6 space-y-5 pb-20">
         {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm font-mono">{error}</div>}
         {success && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-400 text-sm font-mono">{success}</div>}
+        {deleteError && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm font-mono">{deleteError}</div>}
+        {deleteSuccess && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-400 text-sm font-mono">{deleteSuccess}</div>}
+
+        <Section title="🧨 Delete Account">
+          <div className="space-y-3">
+            <p className="text-sm text-gray-400 leading-6">
+              Deleting your account will remove your user record, profile data, meal plans, scans, and session history from the database.
+              This action cannot be undone.
+            </p>
+            <p className="text-xs text-gray-500 font-mono">To confirm, type your account email exactly:</p>
+            <input
+              type="email"
+              className={inputCls}
+              value={deleteEmail}
+              onChange={e => setDeleteEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+            <button
+              onClick={handleDeleteAccount}
+              disabled={deleting || deleteEmail.trim().toLowerCase() !== userEmail.toLowerCase()}
+              className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-semibold transition-colors disabled:opacity-50"
+            >
+              {deleting ? 'Deleting account…' : 'Delete my account'}
+            </button>
+          </div>
+        </Section>
 
         {/* BASIC INFO */}
         <Section title="👤 Basic Info">
