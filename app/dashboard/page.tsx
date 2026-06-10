@@ -32,7 +32,6 @@ function MealCard({
             <span className="text-sm text-gray-500"> kcal</span>
             <p className="text-xs text-green-400 font-mono mt-1">{meal.protein_g}g protein</p>
           </div>
-          {/* Eaten toggle */}
           <button
             onClick={() => onToggle(mealIndex, meal.name, !eaten)}
             title={eaten ? 'Mark as not eaten' : 'Mark as eaten'}
@@ -143,7 +142,6 @@ function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
   const todayDay = days.find((d: any) => d.day?.toLowerCase() === todayDayName.toLowerCase())
   const meals = todayDay?.meals || []
 
-  // Sum macros from eaten meals only
   let consumedP = 0, consumedC = 0, consumedF = 0
   meals.forEach((meal: any, i: number) => {
     const log = todayLogs.find(l => l.meal_index === i)
@@ -246,9 +244,12 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [userName, setUserName] = useState('Athlete')
 
+  // Plan timing data
   const planWeek = plan?.plan_week ?? 1
   const planStartDate = plan?.generated_at ? new Date(plan.generated_at) : null
-  const planDayIndex = planStartDate ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1)) : 1
+  const planDayIndex = planStartDate
+    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
+    : 1
   const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
   const nextWeek = planWeek + 1
   const hasSubscriptionForNextWeek = profile?.paid_weeks >= nextWeek
@@ -291,7 +292,6 @@ export default function DashboardPage() {
   }, [today])
 
   const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
-    // Optimistic update
     setTodayLogs(prev => {
       const existing = prev.find(l => l.meal_index === mealIndex)
       if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
@@ -303,7 +303,6 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }),
       })
-      // Refresh streak
       const res = await fetch(`/api/food-log?date=${today}`)
       if (res.ok) { const d = await res.json(); setStreak(d.streak || 0) }
     } catch { /* silent */ }
@@ -317,7 +316,6 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: planFeedback.trim() }),
       })
-
       const data = await res.json().catch(() => null)
       if (!res.ok || !data) {
         setError(data?.error || 'Failed to generate next week')
@@ -361,11 +359,7 @@ export default function DashboardPage() {
     router.push('/login')
   }
 
-  // ---------- RENDER HELPERS ----------
-
-
-
-  // ---------- MAIN STATES ----------
+  // ---------- RENDER STATES ----------
   if (loading) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">Loading AapkaCoach profile...</div>
   if (error) return (
     <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center p-4">
@@ -429,7 +423,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div>
-            {/* Calorie target bar */}
+            {/* Calorie target bar + Plan meta info */}
             <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-4 mb-4 flex flex-col gap-4">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
@@ -443,6 +437,8 @@ export default function DashboardPage() {
                   <p>{plan.daily_macros?.carbs_g}g carbs · {plan.daily_macros?.fat_g}g fat</p>
                 </div>
               </div>
+
+              {/* Plan week & progress stats */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
                   <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Week</p>
@@ -457,6 +453,18 @@ export default function DashboardPage() {
                   <p className="text-lg font-bold text-white mt-1">{daysLeft} days</p>
                 </div>
               </div>
+
+              {/* Plan creation date — NEW */}
+              {planStartDate && (
+                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230] mt-1">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Generated On</p>
+                  <p className="text-lg font-bold text-white mt-1">
+                    {planStartDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+              )}
+
+              {/* Subscription bar */}
               <div className="bg-[#0a0a10] rounded-2xl border border-[#222230] p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-white">Subscription: <span className="text-yellow-400 font-mono">{profile?.paid_weeks ?? 1}/{profile?.paid_weeks ?? 1}</span> weeks</p>
@@ -481,9 +489,7 @@ export default function DashboardPage() {
             {/* Macro Progress Rings */}
             <MacroRings plan={plan} todayLogs={todayLogs} />
 
-
-
-            {/* Tab Navigation */}
+            {/* Link to full week plan */}
             <button
               onClick={() => router.push('/dashboard/week')}
               className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg"

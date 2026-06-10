@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
-// ── Types & Helper Components (from dashboard) ──
+// ── Types & Helper Components (same as dashboard) ──
 interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
 
 function MealCard({
@@ -69,6 +69,20 @@ export default function WeekPlanPage() {
   const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
   const today = new Date().toISOString().split('T')[0]
   const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+
+  // Auto‑select today's day once plan is loaded
+  useEffect(() => {
+    if (plan && plan.weekly_meals) {
+      const todayIndex = plan.weekly_meals.findIndex(
+        (day: any) => day.day?.toLowerCase() === todayDayName.toLowerCase()
+      )
+      if (todayIndex !== -1) {
+        setActiveDay(todayIndex)
+      } else {
+        setActiveDay(0) // fallback
+      }
+    }
+  }, [plan, todayDayName])
 
   useEffect(() => {
     fetchPlan()
@@ -231,6 +245,13 @@ export default function WeekPlanPage() {
           <span className="text-gray-600">/</span>
           <h1 className="text-lg font-extrabold">Week Plan</h1>
         </div>
+        {/* Optional: Plan creation date */}
+        {plan?.generated_at && (
+          <div className="text-xs text-gray-500 font-mono">
+            📅{' '}
+            {new Date(plan.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+          </div>
+        )}
       </header>
 
       <main className="max-w-5xl mx-auto px-4 md:px-6 py-6">
