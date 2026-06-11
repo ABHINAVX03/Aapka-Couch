@@ -49,7 +49,7 @@ function calculateMacroTargets(form: any) {
 const TOTAL_STEPS = 5
 const stepLabels = ['About You', 'Body Scan', 'Lifestyle', 'Diet', 'Goals']
 const stepDescriptions = [
-  'Let’s start with the basics.',
+  "Let's start with the basics.",
   'Enter your latest BCA or tape measurements.',
   'Tell us about your daily routine.',
   'Dietary preferences and budget.',
@@ -129,11 +129,11 @@ export default function OnboardingPage() {
         return
       }
 
-      // Save profile data
+      // Step 1: Save profile data
       const profileRes = await fetch('/api/me', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        body: JSON.stringify({
           name: form.name,
           age: parseInt(form.age),
           sex: form.sex,
@@ -170,22 +170,29 @@ export default function OnboardingPage() {
         return
       }
 
-      // Trigger AI/programmatic plan generation
-      const planRes = await fetch('/api/meal-plan', {
-        method: 'POST'
+      // Step 2: Trigger AI plan generation via the correct endpoint
+      // FIX: was calling /api/meal-plan (wrong). Must call /api/generate-plan.
+      const planRes = await fetch('/api/generate-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: form.plan_notes.trim() || '',
+          food_type: form.food_type || 'indian',
+        }),
       })
 
-      if (!planRes.ok) {
-        const data = await planRes.json()
-        setError(data.error || 'Failed to generate plan')
+      const planData = await planRes.json().catch(() => null)
+
+      if (!planRes.ok || !planData?.success) {
+        setError(planData?.error || 'Failed to generate plan. Please try again.')
         setLoading(false)
         return
       }
 
-      // Success - redirect to dashboard
+      // Success — redirect to dashboard
       router.push('/dashboard')
-    } catch (error) {
-      console.error('Submit error:', error)
+    } catch (err) {
+      console.error('Submit error:', err)
       setError('An error occurred. Please try again.')
       setLoading(false)
     }
@@ -394,7 +401,7 @@ export default function OnboardingPage() {
               >
                 <option value="eggetarian">Eggetarian</option>
                 <option value="vegetarian">Vegetarian</option>
-                <option value="non-veg">Non‑Vegetarian</option>
+                <option value="non_veg">Non‑Vegetarian</option>
                 <option value="vegan">Vegan</option>
               </select>
             </div>
@@ -408,6 +415,7 @@ export default function OnboardingPage() {
                 <option value="if_14_10">Intermittent Fasting (14:10)</option>
                 <option value="if_16_8">Intermittent Fasting (16:8)</option>
                 <option value="3_meals">3 meals / day</option>
+                <option value="4_meals">4 meals / day</option>
                 <option value="6_meals">6 small meals / day</option>
               </select>
             </div>
@@ -448,7 +456,7 @@ export default function OnboardingPage() {
               <textarea
                 value={form.plan_notes}
                 onChange={e => update('plan_notes', e.target.value)}
-                placeholder="Tell us what worked, what didn’t, or what you want changed."
+                placeholder="Tell us what worked, what didn't, or what you want changed."
                 className="w-full p-3 min-h-[100px] bg-[#17171f] border border-[#222230] rounded-lg text-white"
               />
             </div>
@@ -544,9 +552,10 @@ export default function OnboardingPage() {
 
         {renderStep()}
 
-        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+        {/* FIX: error now renders above buttons, not below them */}
+        {error && <p className="text-red-400 text-sm mt-4 mb-2">{error}</p>}
 
-        <div className="flex justify-between mt-8">
+        <div className="flex justify-between mt-4">
           {step > 0 && (
             <button onClick={prevStep} disabled={loading} className="px-6 py-2 border border-yellow-500 text-yellow-500 rounded-lg disabled:opacity-50">
               Back
@@ -558,7 +567,7 @@ export default function OnboardingPage() {
             </button>
           ) : (
             <button onClick={handleSubmit} disabled={loading} className="px-6 py-2 bg-yellow-500 text-black rounded-lg ml-auto font-bold disabled:opacity-50">
-              {loading ? 'Generating...' : 'Generate Plan'}
+              {loading ? 'Generating your plan…' : 'Generate Plan'}
             </button>
           )}
         </div>

@@ -25,9 +25,16 @@ const DIETARY_PATTERNS = [
 
 const MEAL_TIMINGS = [
   { value: '3_meals', label: '3 Meals/Day' },
-  { value: 'if_16_8', label: 'IF 16:8 (12pm–8pm)' },
-  { value: 'if_14_10', label: 'IF 14:10 (10am–8pm)' },
   { value: '4_meals', label: '4 Meals/Day' },
+  { value: 'if_14_10', label: 'IF 14:10 (10am–8pm)' },
+  { value: 'if_16_8', label: 'IF 16:8 (12pm–8pm)' },
+]
+
+const EATING_ENVIRONMENTS = [
+  { value: 'home_cooked', label: '🏠 Home Cooked' },
+  { value: 'hostel_mess', label: '🏫 Hostel Mess' },
+  { value: 'canteen', label: '🍽️ Canteen' },
+  { value: 'tiffin', label: '📦 Tiffin Service' },
 ]
 
 interface FormField {
@@ -146,7 +153,11 @@ export default function ProfileEditPage() {
     setForm(prev => ({ ...prev, [field]: value }))
 
   const handleSave = async (regenerate = false) => {
-    setSaving(true); setError(null); setSuccess(null)
+    setSaving(true)
+    if (regenerate) setRegenerating(true)
+    setError(null)
+    setSuccess(null)
+
     try {
       const payload = {
         name: form.name,
@@ -187,21 +198,28 @@ export default function ProfileEditPage() {
       }
 
       if (regenerate) {
-        setRegenerating(true)
-        const regenRes = await fetch('/api/meal-plan', {
+        // FIX: use /api/generate-plan (same as onboarding), not /api/meal-plan
+        const regenRes = await fetch('/api/generate-plan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ notes: form.plan_notes.trim() }),
+          body: JSON.stringify({
+            notes: form.plan_notes.trim(),
+            food_type: form.food_type || 'indian',
+          }),
         })
-        setRegenerating(false)
 
-        if (!regenRes.ok) {
-          const regenData = await regenRes.json().catch(() => null)
+        const regenData = await regenRes.json().catch(() => null)
+
+        if (!regenRes.ok || !regenData?.success) {
           throw new Error(regenData?.error || 'Failed to regenerate plan')
         }
       }
 
-      setSuccess(regenerate ? 'Profile saved and plan regenerated.' : 'Profile saved successfully.')
+      setSuccess(
+        regenerate
+          ? '✅ Profile saved and new plan generated! Go to dashboard to view it.'
+          : '✅ Profile saved successfully.'
+      )
     } catch (err: any) {
       setError(err?.message || 'Save failed')
     } finally {
@@ -237,8 +255,8 @@ export default function ProfileEditPage() {
         throw new Error(data?.error || 'Failed to delete account')
       }
 
-      setDeleteSuccess('Your account has been deleted. Redirecting to login...')
-      router.replace('/login')
+      setDeleteSuccess('Your account has been deleted. Redirecting...')
+      setTimeout(() => router.replace('/login'), 1500)
     } catch (err: any) {
       setDeleteError(err?.message || 'Account deletion failed')
     } finally {
@@ -249,14 +267,6 @@ export default function ProfileEditPage() {
   if (loading) return (
     <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
       Loading profile...
-    </div>
-  )
-
-  if (regenerating) return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex flex-col items-center justify-center gap-4">
-      <div className="text-5xl animate-pulse">🧠</div>
-      <p className="text-xl font-bold font-mono">Regenerating your plan with new data…</p>
-      <p className="text-gray-400 text-sm">Please wait 15–40 seconds</p>
     </div>
   )
 
@@ -271,46 +281,27 @@ export default function ProfileEditPage() {
           <span className="text-gray-600">/</span>
           <h1 className="text-lg font-extrabold">Edit <span className="text-yellow-500">Profile</span></h1>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleSave(false)}
-            disabled={saving}
-            className="px-4 py-2 bg-[#17171f] border border-[#222230] text-gray-300 text-sm font-semibold rounded-full hover:border-yellow-500 transition-colors disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+        <button
+          onClick={() => handleSave(false)}
+          disabled={saving}
+          className="px-4 py-2 bg-[#17171f] border border-[#222230] text-gray-300 text-sm font-semibold rounded-full hover:border-yellow-500 transition-colors disabled:opacity-50"
+        >
+          {saving && !regenerating ? 'Saving…' : 'Save'}
+        </button>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 md:px-6 py-6 space-y-5 pb-20">
-        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm font-mono">{error}</div>}
-        {success && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-400 text-sm font-mono">{success}</div>}
-        {deleteError && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm font-mono">{deleteError}</div>}
-        {deleteSuccess && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-400 text-sm font-mono">{deleteSuccess}</div>}
-
-        <Section title="🧨 Delete Account">
-          <div className="space-y-3">
-            <p className="text-sm text-gray-400 leading-6">
-              Deleting your account will remove your user record, profile data, meal plans, scans, and session history from the database.
-              This action cannot be undone.
-            </p>
-            <p className="text-xs text-gray-500 font-mono">To confirm, type your account email exactly:</p>
-            <input
-              type="email"
-              className={inputCls}
-              value={deleteEmail}
-              onChange={e => setDeleteEmail(e.target.value)}
-              placeholder="you@example.com"
-            />
-            <button
-              onClick={handleDeleteAccount}
-              disabled={deleting || deleteEmail.trim().toLowerCase() !== userEmail.toLowerCase()}
-              className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-semibold transition-colors disabled:opacity-50"
-            >
-              {deleting ? 'Deleting account…' : 'Delete my account'}
-            </button>
+      <main className="max-w-2xl mx-auto px-4 md:px-6 py-6 space-y-5 pb-24">
+        {/* Global status messages */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm font-mono">
+            {error}
           </div>
-        </Section>
+        )}
+        {success && (
+          <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-green-400 text-sm font-mono">
+            {success}
+          </div>
+        )}
 
         {/* BASIC INFO */}
         <Section title="👤 Basic Info">
@@ -405,7 +396,11 @@ export default function ProfileEditPage() {
             </Field>
             <Field label="Stress Level (1–10)">
               <input type="range" min="1" max="10" className="w-full mt-2 accent-yellow-500" value={form.stress_level} onChange={e => set('stress_level', e.target.value)} />
-              <div className="flex justify-between text-xs text-gray-500 mt-1"><span>Low</span><span className="text-yellow-400 font-mono font-bold">{form.stress_level}/10</span><span>High</span></div>
+              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                <span>Low</span>
+                <span className="text-yellow-400 font-mono font-bold">{form.stress_level}/10</span>
+                <span>High</span>
+              </div>
             </Field>
           </div>
         </Section>
@@ -435,6 +430,17 @@ export default function ProfileEditPage() {
                 <button key={m.value} type="button" onClick={() => set('meal_timing', m.value)}
                   className={`px-3 py-2.5 rounded-xl border text-sm font-semibold transition-all ${form.meal_timing === m.value ? 'border-yellow-500 bg-yellow-500/10 text-yellow-400' : 'border-[#222230] text-gray-400 hover:border-yellow-500/30'}`}>
                   {m.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          {/* FIX: eating_environment was missing from the form entirely */}
+          <Field label="Eating Environment">
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              {EATING_ENVIRONMENTS.map(e => (
+                <button key={e.value} type="button" onClick={() => set('eating_environment', e.value)}
+                  className={`px-3 py-2.5 rounded-xl border text-sm font-semibold transition-all ${form.eating_environment === e.value ? 'border-yellow-500 bg-yellow-500/10 text-yellow-400' : 'border-[#222230] text-gray-400 hover:border-yellow-500/30'}`}>
+                  {e.label}
                 </button>
               ))}
             </div>
@@ -470,9 +476,49 @@ export default function ProfileEditPage() {
             disabled={saving}
             className="w-full py-4 bg-yellow-500 text-black font-extrabold text-base rounded-2xl hover:bg-yellow-400 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50"
           >
-            {saving ? 'Saving…' : '💾 Save Changes'}
+            {saving && !regenerating ? 'Saving…' : '💾 Save Changes'}
+          </button>
+
+          {/* FIX: Save & Regenerate button was completely missing */}
+          <button
+            onClick={() => handleSave(true)}
+            disabled={saving}
+            className="w-full py-4 bg-[#17171f] border border-yellow-500/50 text-yellow-400 font-extrabold text-base rounded-2xl hover:bg-yellow-500/10 transition-colors disabled:opacity-50"
+          >
+            {regenerating ? '🧠 Generating new plan…' : '🔄 Save & Regenerate Plan'}
           </button>
         </div>
+
+        {/* FIX: Delete Account moved to bottom — was dangerously at the top */}
+        <Section title="🗑️ Delete Account">
+          <div className="space-y-3">
+            <p className="text-sm text-gray-400 leading-6">
+              Deleting your account will remove your user record, profile data, meal plans, scans,
+              and session history from the database. This action cannot be undone.
+            </p>
+            <p className="text-xs text-gray-500 font-mono">To confirm, type your account email exactly:</p>
+            <input
+              type="email"
+              className={inputCls}
+              value={deleteEmail}
+              onChange={e => setDeleteEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+            {deleteError && (
+              <p className="text-red-400 text-xs font-mono">{deleteError}</p>
+            )}
+            {deleteSuccess && (
+              <p className="text-green-400 text-xs font-mono">{deleteSuccess}</p>
+            )}
+            <button
+              onClick={handleDeleteAccount}
+              disabled={deleting || deleteEmail.trim().toLowerCase() !== userEmail.toLowerCase()}
+              className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-semibold transition-colors disabled:opacity-40"
+            >
+              {deleting ? 'Deleting account…' : 'Delete my account'}
+            </button>
+          </div>
+        </Section>
       </main>
     </div>
   )

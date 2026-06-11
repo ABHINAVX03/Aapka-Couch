@@ -82,11 +82,14 @@ export async function PATCH(req: Request) {
       const asNumber = (v: any) => v === '' || v == null ? NaN : Number(v)
 
       // Allowed string enums
+      // FIX: added 'non_veg' to dietary_pattern to match the profile page value
+      // FIX: added 'sex' field with allowed values
       const allowed = {
-        dietary_pattern: ['eggetarian', 'vegetarian', 'non-veg', 'vegan'],
+        sex: ['male', 'female'],
+        dietary_pattern: ['eggetarian', 'vegetarian', 'non-veg', 'non_veg', 'vegan'],
         activity_level: ['sedentary', 'light', 'moderate', 'heavy'],
         primary_goal: ['fat_loss', 'muscle_gain', 'recomp'],
-        meal_timing: ['if_14_10', 'if_16_8', '3_meals', '6_meals', '4_meals'],
+        meal_timing: ['if_14_10', 'if_16_8', '3_meals', '4_meals', '6_meals'],
         eating_environment: ['home_cooked', 'hostel_mess', 'canteen', 'tiffin'],
         food_type: ['indian', 'english', 'western', 'mixed', 'both'],
       }
@@ -94,6 +97,7 @@ export async function PATCH(req: Request) {
       for (const key of Object.keys(data)) {
         const val = data[key]
         if (val === undefined) continue
+
         // Numeric fields
         if ([
           'age', 'height_cm', 'weight_kg', 'body_fat_percent', 'visceral_fat', 'waist_inches',
@@ -145,7 +149,6 @@ export async function PATCH(req: Request) {
 
       if (profileError) {
         console.error('Profile update error:', profileError)
-        // 👇 TEMPORARY – return the exact error so you can see it
         return NextResponse.json(
           { error: 'Failed to update profile', details: profileError.message },
           { status: 500 }
