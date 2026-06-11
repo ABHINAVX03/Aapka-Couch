@@ -14,7 +14,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
     }
 
-    // Validate session exists before forwarding
     const tokenHash = hashToken(authToken)
     const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
@@ -33,36 +32,16 @@ export async function POST(req: Request) {
     const notes = typeof body.notes === 'string' ? body.notes.trim() : ''
     const requestedFoodType = typeof body.food_type === 'string' ? body.food_type.trim().toLowerCase() : ''
 
-    const { data: profile, error: profileError } = await supabaseAdmin
+    // Fetch profile for food_type fallback
+    const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('paid_weeks, food_type')
+      .select('food_type')
       .eq('user_id', session.user_id)
       .single()
 
-    if (profileError || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
-    }
+    const foodType = requestedFoodType || profile?.food_type || 'indian'
 
-    const { count, error: countError } = await supabaseAdmin
-      .from('meal_plans')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', session.user_id)
-
-    if (countError) {
-      console.error('Plan count error:', countError)
-      return NextResponse.json({ error: 'Unable to check current plan status' }, { status: 500 })
-    }
-
-    const planCount = typeof count === 'number' ? count : 0
-    const nextWeek = planCount + 1
-
-    if (planCount > 0 && nextWeek > (profile.paid_weeks || 1)) {
-      return NextResponse.json({ error: `Week ${nextWeek} is locked. Buy week ${nextWeek} to continue your subscription.` }, { status: 402 })
-    }
-
-    const foodType = requestedFoodType || (profile && profile.food_type) || 'indian'
-
-    // Forward request to Supabase Edge Function with server-side cookie token
+    // ✅ CRITICAL FIX: send user_id to the edge function
     const edgeRes = await fetch(EDGE_FUNCTION_URL, {
       method: 'POST',
       headers: {
@@ -70,18 +49,24 @@ export async function POST(req: Request) {
         'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
         'Authorization': `Bearer ${authToken}`,
       },
-      body: JSON.stringify({ notes, food_type: foodType }),
+      body: JSON.stringify({
+        user_id: session.user_id,    // <-- added
+        notes,
+        food_type: foodType,
+      }),
     })
 
     const edgeData = await edgeRes.json().catch(() => null)
 
     if (!edgeRes.ok) {
       console.error('Edge function error:', edgeRes.status, edgeData)
-      return NextResponse.json({ error: edgeData?.error ?? 'Plan generation failed. Please try again.' }, { status: edgeRes.status })
+      return NextResponse.json(
+        { error: edgeData?.error || 'Plan generation failed' },
+        { status: edgeRes.status }
+      )
     }
 
-    // Return the edge function JSON directly so client receives { success, plan }
-    return NextResponse.json(edgeData)
+    return NextResponse.json(edgeData)   // already { success: true, plan }
   } catch (error) {
     console.error('POST /api/generate-plan error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

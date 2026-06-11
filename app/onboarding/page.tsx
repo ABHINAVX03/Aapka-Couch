@@ -49,7 +49,7 @@ function calculateMacroTargets(form: any) {
 const TOTAL_STEPS = 5
 const stepLabels = ['About You', 'Body Scan', 'Lifestyle', 'Diet', 'Goals']
 const stepDescriptions = [
-  "Let's start with the basics.",
+  'Let’s start with the basics.',
   'Enter your latest BCA or tape measurements.',
   'Tell us about your daily routine.',
   'Dietary preferences and budget.',

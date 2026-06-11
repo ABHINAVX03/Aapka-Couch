@@ -233,7 +233,12 @@ serve(async (req) => {
     const token = authHeader.replace("Bearer ", "").trim();
     const tokenHash = await hashTokenDeno(token);
 
+    console.log("Received auth header:", req.headers.get("Authorization"));
+    console.log("Extracted token:", token);
+    console.log("Computed hash:", tokenHash);
+    
     // Look up the token in the custom sessions table by hash
+    
     const { data: session, error: sessionError } = await supabaseAdmin
       .from("sessions")
       .select("user_id")
@@ -250,7 +255,7 @@ serve(async (req) => {
         }
       );
     }
-
+    
     const userId = session.user_id;
 
     // ----- FETCH PROFILE -----
