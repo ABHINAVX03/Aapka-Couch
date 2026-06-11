@@ -161,7 +161,7 @@ function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Today's Macro Progress</p>
-          <p className="text-sm text-gray-400 mt-0.5">Tap ✓ on meals above to update</p>
+          <p className="text-sm text-gray-400 mt-0.5">Tap ✓ on meals below to update</p>
         </div>
         <span className="text-xs text-gray-600 font-mono">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
       </div>
@@ -183,48 +183,34 @@ const STEPS = [
   { icon: '🍱', label: 'Building 7-day Indian meal rotation…' },
   { icon: '🏋️', label: 'Designing your workout split…' },
   { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
-  { icon: '✅', label: 'Finalising your personalised plan…' },
 ]
 
 function GeneratingScreen() {
   const [stepIdx, setStepIdx] = useState(0)
   useEffect(() => {
-    const iv = setInterval(() => setStepIdx(p => (p < STEPS.length - 1 ? p + 1 : p)), 2800)
-    return () => clearInterval(iv)
+    const t = setInterval(() => setStepIdx(i => (i + 1) % STEPS.length), 3500)
+    return () => clearInterval(t)
   }, [])
+  const s = STEPS[stepIdx]
   return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-10">
-          <div className="text-5xl mb-4 animate-pulse">🧠</div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Aapka<span className="text-yellow-500">Coach</span> AI</h1>
-          <p className="text-gray-400 text-sm mt-2">Generating your personalised plan with DeepSeek AI…</p>
-        </div>
-        <div className="space-y-3 mb-10">
-          {STEPS.map((step, i) => {
-            const done = i < stepIdx; const active = i === stepIdx
-            return (
-              <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-500 ${
-                done ? 'border-green-500/30 bg-green-500/5 opacity-60'
-                  : active ? 'border-yellow-500/50 bg-yellow-500/5 scale-[1.02] shadow-lg shadow-yellow-500/10'
-                  : 'border-[#222230] opacity-30'
-              }`}>
-                <span className="text-xl w-7 text-center">{done ? '✅' : step.icon}</span>
-                <span className={`text-sm font-mono ${active ? 'text-yellow-400' : done ? 'text-green-400' : 'text-gray-500'}`}>{step.label}</span>
-                {active && (
-                  <span className="ml-auto flex gap-1">
-                    {[0,1,2].map(d => <span key={d} className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: `${d * 0.15}s` }} />)}
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-        <div className="w-full bg-[#17171f] rounded-full h-1.5 border border-[#222230]">
-          <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
-        </div>
-        <p className="text-center text-xs text-gray-500 font-mono mt-3">This takes 15–40 seconds. Please don't close this tab.</p>
+    <div className="min-h-screen bg-[#0c0c10] text-white flex flex-col items-center justify-center gap-6 px-6">
+      <div className="text-6xl animate-pulse">{s.icon}</div>
+      <div className="text-center max-w-sm">
+        <p className="text-xl font-bold font-mono text-white">{s.label}</p>
+        <p className="text-sm text-gray-500 mt-2">Your AI plan is being generated…</p>
       </div>
+      <div className="w-full max-w-xs space-y-2 mt-4">
+        {STEPS.map((step, i) => (
+          <div key={i} className={`flex items-center gap-2 text-xs font-mono transition-all ${i === stepIdx ? 'text-yellow-400' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
+            <span>{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
+            <span>{step.label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="w-full bg-[#17171f] rounded-full h-1.5 border border-[#222230]">
+        <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
+      </div>
+      <p className="text-center text-xs text-gray-500 font-mono mt-3">This takes 15–40 seconds. Please don't close this tab.</p>
     </div>
   )
 }
@@ -253,11 +239,21 @@ export default function DashboardPage() {
   const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
   const nextWeek = planWeek + 1
   const hasSubscriptionForNextWeek = profile?.paid_weeks >= nextWeek
-  const isFirstWeek = planWeek === 1
 
   // Food log state
   const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
   const [streak, setStreak] = useState(0)
+
+  // FIX: derive today's meals in the main component so MealCard can be rendered
+  const todayMeals: any[] = (() => {
+    const days = plan?.weekly_meals || []
+    const todayDay = days.find((d: any) => d.day?.toLowerCase() === todayDayName.toLowerCase())
+    return todayDay?.meals || []
+  })()
+
+  const eatenCount = todayMeals.filter((_: any, i: number) =>
+    todayLogs.find(l => l.meal_index === i)?.eaten
+  ).length
 
   useEffect(() => { loadPlan() }, [])
   useEffect(() => { if (plan) loadFoodLog() }, [plan])
@@ -349,27 +345,20 @@ export default function DashboardPage() {
     }
   }
 
-  const triggerRegeneration = async () => {
-    if (generating) return
-    await generateNextWeek()
-  }
-
   const handleLogout = async () => {
     try { await fetch('/api/logout', { method: 'POST' }) } catch {}
     router.push('/login')
   }
 
   // ---------- RENDER STATES ----------
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">Loading AapkaCoach profile...</div>
-  if (error) return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center p-4">
-      <div className="bg-[#17171f] border border-red-500/20 p-6 rounded-2xl text-center max-w-sm">
-        <p className="text-red-400 mb-4 font-mono">{error}</p>
-        <button onClick={loadPlan} className="px-5 py-2 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-600">Retry</button>
-      </div>
+  if (loading) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
+      Loading AapkaCoach profile...
     </div>
   )
-  if (generating) return <GeneratingScreen />
+
+  // FIX: generating no longer replaces the whole page — it only disables the button
+  // The GeneratingScreen is kept for the "no plan yet" first-time generation flow only
 
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white">
@@ -408,22 +397,37 @@ export default function DashboardPage() {
       </header>
 
       {/* Main */}
-      <main className="max-w-4xl mx-auto px-4 md:px-6 pt-6">
-        {!plan ? (
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
-            <div className="text-5xl mb-4">📋</div>
-            <h2 className="text-2xl font-bold mb-3 text-white">No Active Plan Found</h2>
-            <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-              We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.
-            </p>
-            <button onClick={triggerRegeneration}
-              className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20">
-              Generate My AI Plan 🤖
-            </button>
+      <main className="max-w-4xl mx-auto px-4 md:px-6 pt-6 pb-16">
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4 text-red-400 text-sm font-mono">
+            {error}
           </div>
+        )}
+
+        {!plan ? (
+          /* ── No plan yet ── */
+          generating ? (
+            <GeneratingScreen />
+          ) : (
+            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
+              <div className="text-5xl mb-4">📋</div>
+              <h2 className="text-2xl font-bold mb-3 text-white">No Active Plan Found</h2>
+              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+                We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.
+              </p>
+              <button
+                onClick={() => generateNextWeek()}
+                disabled={generating}
+                className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50"
+              >
+                {generating ? 'Generating…' : 'Generate My AI Plan 🤖'}
+              </button>
+            </div>
+          )
         ) : (
           <div>
-            {/* Calorie target bar + Plan meta info */}
+            {/* ── Plan meta + subscription bar ── */}
             <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-4 mb-4 flex flex-col gap-4">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
@@ -438,7 +442,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Plan week & progress stats */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
                   <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Week</p>
@@ -454,9 +457,8 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Plan creation date — NEW */}
               {planStartDate && (
-                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230] mt-1">
+                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
                   <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Generated On</p>
                   <p className="text-lg font-bold text-white mt-1">
                     {planStartDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
@@ -464,15 +466,10 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Subscription bar */}
               <div className="bg-[#0a0a10] rounded-2xl border border-[#222230] p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="font-semibold text-white">Subscription: <span className="text-yellow-400 font-mono">{profile?.paid_weeks ?? 1}/{profile?.paid_weeks ?? 1}</span> weeks</p>
+                  <p className="font-semibold text-white">Subscription: <span className="text-yellow-400 font-mono">{profile?.paid_weeks ?? 1} week{(profile?.paid_weeks ?? 1) !== 1 ? 's' : ''}</span></p>
                   <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs px-2 py-1 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded hover:bg-yellow-500/20">Manage</button>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">7 / 7 days left</span>
-                  <span className="text-xs text-gray-500 font-mono">Week resets in 7d</span>
                 </div>
                 <div className="w-full bg-[#1a1a24] rounded-full h-2 overflow-hidden">
                   <div className="bg-gradient-to-r from-green-500 to-yellow-500 h-full" style={{ width: '100%' }}></div>
@@ -486,16 +483,76 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Macro Progress Rings */}
+            {/* ── Adherence Ring ── */}
+            <div className="mb-4">
+              <AdherenceRing
+                eaten={eatenCount}
+                total={todayMeals.length}
+                streak={streak}
+              />
+            </div>
+
+            {/* ── Macro Progress Rings ── */}
             <MacroRings plan={plan} todayLogs={todayLogs} />
 
-            {/* Link to full week plan */}
+            {/* ── TODAY'S MEALS — FIX: was never rendered ── */}
+            {todayMeals.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-bold text-white">
+                    Today's Meals
+                    <span className="text-xs text-gray-500 font-normal font-mono ml-2">({todayDayName})</span>
+                  </h2>
+                  <span className="text-xs text-gray-500 font-mono">{eatenCount}/{todayMeals.length} eaten</span>
+                </div>
+                {todayMeals.map((meal: any, i: number) => (
+                  <MealCard
+                    key={i}
+                    meal={meal}
+                    mealIndex={i}
+                    today={today}
+                    todayLogs={todayLogs}
+                    onToggle={toggleMealEaten}
+                  />
+                ))}
+              </div>
+            )}
+
+            {todayMeals.length === 0 && (
+              <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-2xl p-6 text-center mb-6">
+                <p className="text-gray-500 text-sm font-mono">No meals found for {todayDayName} in this plan.</p>
+                <p className="text-gray-600 text-xs mt-1">Check the full week plan below.</p>
+              </div>
+            )}
+
+            {/* ── Link to full week plan ── */}
             <button
               onClick={() => router.push('/dashboard/week')}
-              className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg"
+              className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg mb-4"
             >
               View Full Week Plan → (Diet · Workout · Lifestyle)
             </button>
+
+            {/* ── Generate next week (if subscription allows) ── */}
+            {hasSubscriptionForNextWeek && (
+              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
+                <h3 className="font-bold text-white mb-1">Generate Week {nextWeek}</h3>
+                <p className="text-xs text-gray-500 mb-3">Add optional notes before generating your next plan.</p>
+                <textarea
+                  value={planFeedback}
+                  onChange={e => setPlanFeedback(e.target.value)}
+                  placeholder="e.g. more variety, less rice, felt low energy on Thursday…"
+                  className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-sm resize-none min-h-[80px] focus:border-yellow-500 outline-none mb-3"
+                />
+                <button
+                  onClick={generateNextWeek}
+                  disabled={generating}
+                  className="w-full py-3 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50"
+                >
+                  {generating ? '🧠 Generating Week ' + nextWeek + '…' : '🚀 Generate Week ' + nextWeek}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </main>

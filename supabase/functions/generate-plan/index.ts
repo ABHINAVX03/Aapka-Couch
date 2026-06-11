@@ -64,22 +64,9 @@ function validatePlan(p: any): boolean {
     }
   }
 
-  // Optional: verify that per-day meal sums roughly match daily_macros (tolerance)
-  const tol = { calories: 60, protein_g: 6, carbs_g: 12, fat_g: 6 };
-  const dmValues = p.daily_macros;
-  for (const day of p.weekly_meals) {
-    let sum = { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
-    for (const meal of day.meals) {
-      sum.calories += meal.kcal || 0;
-      sum.protein_g += meal.protein_g || 0;
-      sum.carbs_g += meal.carbs_g || 0;
-      sum.fat_g += meal.fat_g || 0;
-    }
-    if (Math.abs(sum.calories - dmValues.calories) > tol.calories) return false;
-    if (Math.abs(sum.protein_g - dmValues.protein_g) > tol.protein_g) return false;
-    if (Math.abs(sum.carbs_g - dmValues.carbs_g) > tol.carbs_g) return false;
-    if (Math.abs(sum.fat_g - dmValues.fat_g) > tol.fat_g) return false;
-  }
+  // NOTE: Removed strict per-day macro sum cross-check.
+  // The AI targets daily_macros as an average — individual days legitimately
+  // vary ±100–200 kcal. The strict ±60 kcal tolerance was rejecting valid plans.
 
   return true;
 }
@@ -193,6 +180,8 @@ OUTPUT JSON STRUCTURE (follow exactly):
           "name": "Meal name",
           "kcal": 0,
           "protein_g": 0,
+          "carbs_g": 0,
+          "fat_g": 0,
           "foods": [
             { "name": "Food item", "quantity": "amount + unit", "protein_g": 0, "carbs_g": 0, "fat_g": 0, "kcal": 0, "cost_inr": 0 }
           ],
