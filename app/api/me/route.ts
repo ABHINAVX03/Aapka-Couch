@@ -164,7 +164,7 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json({ user })
   } catch (error) {
-    console.error('PATCH /api/me error:', error)\
+    console.error('PATCH /api/me error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
