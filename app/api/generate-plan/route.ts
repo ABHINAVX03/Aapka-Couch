@@ -3,7 +3,8 @@ import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
 import { hashToken } from '@/lib/otp'
 
-const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
+const DIET_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-diet`
+const WORKOUT_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-workout`
 
 export async function POST(req: Request) {
   try {
@@ -32,17 +33,16 @@ export async function POST(req: Request) {
     const notes = typeof body.notes === 'string' ? body.notes.trim() : ''
     const requestedFoodType = typeof body.food_type === 'string' ? body.food_type.trim().toLowerCase() : ''
 
-    // Fetch profile for food_type fallback
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('food_type')
+      .select('food_type, meal_count')
       .eq('user_id', session.user_id)
       .single()
 
     const foodType = requestedFoodType || profile?.food_type || 'indian'
 
-    // ✅ CRITICAL FIX: send user_id to the edge function
-    const edgeRes = await fetch(EDGE_FUNCTION_URL, {
+    // ── Step 1: Generate Diet Plan ──
+    const dietRes = await fetch(DIET_FUNCTION_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -50,23 +50,47 @@ export async function POST(req: Request) {
         'Authorization': `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        user_id: session.user_id,    // <-- added
         notes,
         food_type: foodType,
+        meal_count: profile?.meal_count || 4,
       }),
     })
 
-    const edgeData = await edgeRes.json().catch(() => null)
+    const dietData = await dietRes.json().catch(() => null)
 
-    if (!edgeRes.ok) {
-      console.error('Edge function error:', edgeRes.status, edgeData)
+    if (!dietRes.ok) {
+      console.error('Diet function error:', dietRes.status, dietData)
       return NextResponse.json(
-        { error: edgeData?.error || 'Plan generation failed' },
-        { status: edgeRes.status }
+        { error: dietData?.error || 'Diet plan generation failed' },
+        { status: dietRes.status }
       )
     }
 
-    return NextResponse.json(edgeData)   // already { success: true, plan }
+    // ── Step 2: Generate Workout & Lifestyle ──
+    const workoutRes = await fetch(WORKOUT_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({}),
+    })
+
+    const workoutData = await workoutRes.json().catch(() => null)
+
+    // ── Combine results ──
+    const plan = {
+      ...(dietData.plan || {}),
+      workout_plan: workoutData?.workout_plan || null,
+      lifestyle_rules: workoutData?.lifestyle_rules || null,
+    }
+
+    return NextResponse.json({
+      success: true,
+      plan_week: dietData.plan_week,
+      plan,
+    })
   } catch (error) {
     console.error('POST /api/generate-plan error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
