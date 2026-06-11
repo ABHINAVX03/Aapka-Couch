@@ -67,23 +67,38 @@ export async function POST(req: Request) {
     }
 
     // ── Step 2: Generate Workout & Lifestyle ──
-    const workoutRes = await fetch(WORKOUT_FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-        'Authorization': `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({}),
-    })
+    let workoutPlan = null;
+    let lifestyleRules = null;
 
-    const workoutData = await workoutRes.json().catch(() => null)
+    try {
+      const workoutRes = await fetch(WORKOUT_FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({}),
+      });
+
+      const workoutData = await workoutRes.json().catch(() => null);
+      console.log('Workout function response:', workoutRes.status, workoutData);
+
+      if (workoutRes.ok && workoutData) {
+        workoutPlan = workoutData.workout_plan;
+        lifestyleRules = workoutData.lifestyle_rules;
+      } else {
+        console.warn('Workout generation failed — using fallback.');
+      }
+    } catch (err) {
+      console.error('Workout function call error:', err);
+    }
 
     // ── Combine results ──
     const plan = {
       ...(dietData.plan || {}),
-      workout_plan: workoutData?.workout_plan || null,
-      lifestyle_rules: workoutData?.lifestyle_rules || null,
+      workout_plan: workoutPlan,
+      lifestyle_rules: lifestyleRules,
     }
 
     return NextResponse.json({
