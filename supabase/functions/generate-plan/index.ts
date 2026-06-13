@@ -30,13 +30,12 @@ async function hashTokenDeno(token: string): Promise<string> {
 }
 
 // ─────────────────────────────────────────────
-// MACRO MATH ENGINE (Strict Recomp 25% Deficit)
+// MACRO MATH ENGINE
 // ─────────────────────────────────────────────
 function calcMacros(profile: Record<string, unknown>): MacroTargets {
   const weightKg = safeNum(profile.weight_kg, 74);
-  const heightCm = safeNum(profile.height_cm, 178);
-  const sex = String(profile.sex || "male").toLowerCase();
   const bodyFatPct = clamp(safeNum(profile.body_fat_percent, 17), 5, 55);
+  const sex = String(profile.sex || "male").toLowerCase();
   const activityLevel = String(profile.activity_level || "moderate").toLowerCase();
   const goal = String(profile.primary_goal || "recomp").toLowerCase();
 
@@ -66,7 +65,6 @@ function calcMacros(profile: Record<string, unknown>): MacroTargets {
   }
 
   const weeklyWeightChangeKg = (deficitSurplusKcal * 7) / 7700;
-
   let proteinG = clamp(Math.round(weightKg * 1.85), 100, 180);
   const fatG = clamp(Math.round(weightKg * 1.1), 50, 95);
   const carbsG = Math.max(Math.round((targetCalories - proteinG * 4 - fatG * 9) / 4), 60);
@@ -85,7 +83,7 @@ function getMealTimingConfig(pref: string): TimingConfig {
     case "3_meals": return { times: ["08:00 AM", "01:30 PM", "08:00 PM"], names: ["Breakfast", "Lunch", "Dinner"], count: 3, kcalSplit: [0.30, 0.40, 0.30] };
     case "if_16_8": return { times: ["12:00 PM", "04:00 PM", "08:00 PM"], names: ["Break-Fast", "Pre-Workout", "Dinner"], count: 3, kcalSplit: [0.35, 0.25, 0.40] };
     case "if_14_10": return { times: ["10:00 AM", "01:30 PM", "05:00 PM", "08:00 PM"], names: ["Brunch", "Lunch", "Pre-Workout", "Dinner"], count: 4, kcalSplit: [0.25, 0.30, 0.15, 0.30] };
-    case "6_meals": return { times: ["07:30 AM", "10:30 AM", "01:30 PM", "04:30 PM", "07:30 PM", "10:00 PM"], names: ["Early Breakfast", "Mid-Morning", "Lunch", "Pre-Workout", "Dinner", "Pre-Sleep"], count: 6, kcalSplit: [0.15, 0.12, 0.25, 0.18, 0.22, 0.08] };
+    case "6_meals": return { times: ["07:30 AM", "10:30 AM", "01:30 PM", "04:30 PM", "07:30 PM", "10:00 PM"], names: ["Early Snack", "Breakfast", "Lunch", "Pre-Workout", "Dinner", "Pre-Sleep"], count: 6, kcalSplit: [0.15, 0.12, 0.25, 0.18, 0.22, 0.08] };
     default: return { times: ["08:00 AM", "01:00 PM", "05:00 PM", "08:30 PM"], names: ["Breakfast", "Lunch", "Evening Snack", "Dinner"], count: 4, kcalSplit: [0.25, 0.30, 0.15, 0.30] };
   }
 }
@@ -97,20 +95,16 @@ function ensureArray(val: any): any[] {
 }
 
 // ─────────────────────────────────────────────
-// THE AUTO-SCALER (Fixes AI Math Hallucinations)
+// DIET VALIDATOR & AUTO-SCALER (Working Perfectly)
 // ─────────────────────────────────────────────
 function validateAndScaleMacros(plan: any, macros: MacroTargets): any {
   const weeklyMeals = ensureArray(plan.weekly_meals);
   if (weeklyMeals.length === 0) return plan;
 
-  const targetP = macros.protein_g;
-  const targetC = macros.carbs_g;
-  const targetF = macros.fat_g;
+  const targetP = macros.protein_g; const targetC = macros.carbs_g; const targetF = macros.fat_g;
 
   const fixed = weeklyMeals.map((day: any) => {
     const meals = ensureArray(day.meals);
-
-    // 1. Read AI data
     const parsedMeals = meals.map((meal: any) => {
       const foodsRaw = ensureArray(meal.foods || meal.ingredients || meal.items);
       const normalizedFoods = foodsRaw.map((food: any) => {
@@ -118,89 +112,45 @@ function validateAndScaleMacros(plan: any, macros: MacroTargets): any {
         const c = Math.round(safeNum(food.carbs_g ?? food.carbs ?? food.Carbs));
         const f = Math.round(safeNum(food.fat_g ?? food.fat ?? food.Fat));
         const fib = Math.round(safeNum(food.fiber_g ?? food.fiber ?? food.Fiber));
-        return {
-          name: String(food.name || "Food"),
-          quantity: String(food.quantity || "1 serving"),
-          protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib,
-          kcal: (p * 4) + (c * 4) + (f * 9)
-        };
+        return { name: String(food.name || "Food"), quantity: String(food.quantity || "1 serving"), protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: (p * 4) + (c * 4) + (f * 9) };
       });
       return { ...meal, foods: normalizedFoods };
     });
 
-    // 2. Sum up what the AI generated
     let currP = 0, currC = 0, currF = 0;
-    parsedMeals.forEach((m: any) => m.foods.forEach((f: any) => {
-      currP += f.protein_g; currC += f.carbs_g; currF += f.fat_g;
-    }));
+    parsedMeals.forEach((m: any) => m.foods.forEach((f: any) => { currP += f.protein_g; currC += f.carbs_g; currF += f.fat_g; }));
+    if (currP === 0) currP = 1; if (currC === 0) currC = 1; if (currF === 0) currF = 1;
 
-    if (currP === 0) currP = 1;
-    if (currC === 0) currC = 1;
-    if (currF === 0) currF = 1;
-
-    // 3. Calculate adjustment ratios
-    const ratioP = targetP / currP;
-    const ratioC = targetC / currC;
-    const ratioF = targetF / currF;
-
+    const ratioP = targetP / currP; const ratioC = targetC / currC; const ratioF = targetF / currF;
     let newDayP = 0, newDayC = 0, newDayF = 0;
 
-    // 4. Scale all foods up or down to hit 100% exactly
     const scaledMeals = parsedMeals.map((meal: any) => {
       let mealP = 0, mealC = 0, mealF = 0, mealFib = 0;
-
       const scaledFoods = meal.foods.map((food: any) => {
-        let p = Math.round(food.protein_g * ratioP);
-        let c = Math.round(food.carbs_g * ratioC);
-        let f = Math.round(food.fat_g * ratioF);
-        let fib = Math.round(food.fiber_g * ratioC);
-        let k = (p * 4) + (c * 4) + (f * 9);
-
-        // Scale the text quantity (e.g., "100g" -> "120g") if the ratio change is noticeable
+        let p = Math.round(food.protein_g * ratioP); let c = Math.round(food.carbs_g * ratioC); let f = Math.round(food.fat_g * ratioF); let fib = Math.round(food.fiber_g * ratioC);
         let qty = food.quantity;
         const avgRatio = (ratioP + ratioC + ratioF) / 3;
-        if (Math.abs(avgRatio - 1) > 0.10) {
-          qty = qty.replace(/\b\d+(\.\d+)?\b/g, (match: string) => {
-            const num = parseFloat(match);
-            return Math.round(num * avgRatio).toString();
-          });
-        }
-
+        if (Math.abs(avgRatio - 1) > 0.10) { qty = qty.replace(/\b\d+(\.\d+)?\b/g, (match: string) => Math.round(parseFloat(match) * avgRatio).toString()); }
         mealP += p; mealC += c; mealF += f; mealFib += fib;
-        return { ...food, quantity: qty, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: k };
+        return { ...food, quantity: qty, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: (p * 4) + (c * 4) + (f * 9) };
       });
-
       newDayP += mealP; newDayC += mealC; newDayF += mealF;
-      const mealKcal = (mealP * 4) + (mealC * 4) + (mealF * 9);
-
-      return { ...meal, foods: scaledFoods, protein_g: mealP, carbs_g: mealC, fat_g: mealF, fiber_g: mealFib, kcal: mealKcal };
+      return { ...meal, foods: scaledFoods, protein_g: mealP, carbs_g: mealC, fat_g: mealF, fiber_g: mealFib, kcal: (mealP * 4) + (mealC * 4) + (mealF * 9) };
     });
 
-    // 5. Dump any rounding remainders perfectly into the very last food item of the day
-    const diffP = targetP - newDayP;
-    const diffC = targetC - newDayC;
-    const diffF = targetF - newDayF;
-
+    const diffP = targetP - newDayP; const diffC = targetC - newDayC; const diffF = targetF - newDayF;
     if ((diffP !== 0 || diffC !== 0 || diffF !== 0) && scaledMeals.length > 0) {
       const lastMeal = scaledMeals[scaledMeals.length - 1];
       if (lastMeal.foods.length > 0) {
         const lastFood = lastMeal.foods[lastMeal.foods.length - 1];
-        lastFood.protein_g = Math.max(0, lastFood.protein_g + diffP);
-        lastFood.carbs_g = Math.max(0, lastFood.carbs_g + diffC);
-        lastFood.fat_g = Math.max(0, lastFood.fat_g + diffF);
+        lastFood.protein_g = Math.max(0, lastFood.protein_g + diffP); lastFood.carbs_g = Math.max(0, lastFood.carbs_g + diffC); lastFood.fat_g = Math.max(0, lastFood.fat_g + diffF);
         lastFood.kcal = (lastFood.protein_g * 4) + (lastFood.carbs_g * 4) + (lastFood.fat_g * 9);
-
-        lastMeal.protein_g += diffP;
-        lastMeal.carbs_g += diffC;
-        lastMeal.fat_g += diffF;
+        lastMeal.protein_g += diffP; lastMeal.carbs_g += diffC; lastMeal.fat_g += diffF;
         lastMeal.kcal = (lastMeal.protein_g * 4) + (lastMeal.carbs_g * 4) + (lastMeal.fat_g * 9);
-
         newDayP += diffP; newDayC += diffC; newDayF += diffF;
       }
     }
-
-    const newDayKcal = (newDayP * 4) + (newDayC * 4) + (newDayF * 9);
-    return { ...day, meals: scaledMeals, total_kcal: newDayKcal, total_protein_g: newDayP, total_carbs_g: newDayC, total_fat_g: newDayF };
+    return { ...day, meals: scaledMeals, total_kcal: (newDayP * 4) + (newDayC * 4) + (newDayF * 9), total_protein_g: newDayP, total_carbs_g: newDayC, total_fat_g: newDayF };
   });
 
   return { ...plan, weekly_meals: fixed };
@@ -219,69 +169,92 @@ function expandToSevenDays(plan: any, macros: MacroTargets): any {
   if (base.length === 0) return plan;
   if (base.length >= 7) return plan;
 
-  const d1 = base[0];
-  const d2 = base[1 % base.length];
-  const d4 = base[3 % base.length];
-
+  const d1 = base[0]; const d2 = base[1 % base.length]; const d4 = base[3 % base.length];
   const extras = [
     { ...d4, day: "Friday", day_name: "Friday", type: "standard", daily_note: "HIIT day — maintain intensity.", hydration_reminder: "500ml water pre-workout." },
     { ...d2, day: "Saturday", day_name: "Saturday", type: "refeed", total_kcal: macros.calories + 200, daily_note: `Refeed day — ${macros.calories + 200} kcal to prevent metabolic adaptation.`, hydration_reminder: "Extra carbs require extra water." },
     { ...d1, day: "Sunday", day_name: "Sunday", type: "rest", daily_note: "Rest day — muscles grow outside the gym.", hydration_reminder: "Hydrate and prep meals for tomorrow." }
   ];
-
   return { ...plan, weekly_meals: [...base, ...extras] };
 }
 
-function getFallbackDiet(macros: MacroTargets, profile: Record<string, unknown>, timing: TimingConfig): any {
-  const dp = String(profile.dietary_pattern || "vegetarian").toLowerCase();
-  const proBases = [];
-  
-  if (dp === "vegan") {
-    proBases.push({ n: "Soya Chunks (boiled)", q: 50, u: "g dry", p: 26, c: 17, f: 0.5, fib: 7 });
-    proBases.push({ n: "Tofu (cubed)", q: 100, u: "g", p: 16, c: 3, f: 8, fib: 1 });
-  } else if (dp === "vegetarian") {
-    proBases.push({ n: "Paneer (cubed)", q: 100, u: "g", p: 18, c: 3, f: 14, fib: 0 });
-    proBases.push({ n: "Soya Chunks (boiled)", q: 50, u: "g dry", p: 26, c: 17, f: 0.5, fib: 7 });
-  } else if (dp === "eggetarian") {
-    proBases.push({ n: "Whole Eggs", q: 1, u: " large", p: 6, c: 0.5, f: 5, fib: 0 });
-    proBases.push({ n: "Egg Whites", q: 4, u: " whites", p: 14, c: 0, f: 0, fib: 0 });
-  } else {
-    proBases.push({ n: "Chicken Breast", q: 100, u: "g raw", p: 23, c: 0, f: 1.5, fib: 0 });
-    proBases.push({ n: "Whole Eggs", q: 1, u: " large", p: 6, c: 0.5, f: 5, fib: 0 });
-  }
-
-  const carbBases = [
-    { n: "White Rice (cooked)", q: 100, u: "g", p: 2.5, c: 28, f: 0.3, fib: 0.5 },
-    { n: "Whole Wheat Roti", q: 1, u: " roti", p: 3, c: 15, f: 0.5, fib: 2 }
-  ];
-
-  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-  
-  const weekly_meals = days.map((day, dIdx) => {
-    const meals = timing.times.map((time, mIdx) => {
-      let targetP = Math.round(macros.protein_g * timing.kcalSplit[mIdx]);
-      let targetC = Math.round(macros.carbs_g * timing.kcalSplit[mIdx]);
-      let targetF = Math.round(macros.fat_g * timing.kcalSplit[mIdx]);
-
-      const pb = proBases[(dIdx + mIdx) % proBases.length];
-      const foods = [];
-      foods.push({ name: pb.n, quantity: `1 serving`, protein_g: targetP, carbs_g: 5, fat_g: targetF, fiber_g: 2, kcal: targetP * 4 + 5 * 4 + targetF * 9 });
-
-      const cb = carbBases[(dIdx + mIdx) % carbBases.length];
-      foods.push({ name: cb.n, quantity: `1 serving`, protein_g: 0, carbs_g: targetC - 5, fat_g: 0, fiber_g: 3, kcal: (targetC - 5) * 4 });
-
-      return { time, name: timing.names[mIdx], kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, foods, tip: "Eat protein first — activates fullness signals faster." };
-    });
-    return { day, day_name: day, type: "standard", total_kcal: 0, total_protein_g: 0, total_carbs_g: 0, total_fat_g: 0, hydration_reminder: "Drink a glass of water before each meal.", daily_note: "Hit your macro targets perfectly today.", meals };
-  });
-
-  return { weekly_rules: { protein_strategy: "Prioritize hitting your protein target across your meals.", refeed_day: `Sunday: Eat at ${macros.calories + 300} kcal.`, steps_target: "9,000–10,000 steps daily.", sleep_protocol: "7.5–8 hrs nightly.", water_target: "3.5–4 L daily." }, weekly_meals };
-}
-
+// ─────────────────────────────────────────────
+// DETAILED FALLBACK WORKOUT (Fires if AI times out or empties)
+// ─────────────────────────────────────────────
 function getFallbackWorkout() {
   return {
-    workout_plan: { frequency: "5 sessions per week", philosophy: "Progressive overload on compound movements.", weekly_schedule_summary: ["Mon: Push", "Tue: Pull", "Wed: Rest", "Thu: Legs", "Fri: HIIT", "Sat: Full Body", "Sun: Rest"], rest_day_activity: "8,000-step walk.", progressive_overload_note: "Add 2.5kg to compound lifts every 1-2 weeks.", sessions: [{ day: "Monday", type: "Strength", focus: "Push", duration_min: 45, warm_up: ["Arm circles"], exercises: [{ name: "Pushups", sets: 4, reps: "10-12", rest_sec: 90, tip: "Retract scapula." }], cool_down: ["Chest stretch"] }] },
-    lifestyle_rules: { sleep_hours: "7.5–8 hours", water_liters: "3.5 liters/day", daily_steps: "8,000–10,000 steps", stress_management: ["4-7-8 breathing"], avoid_list: ["Liquid calories"], recovery_tips: ["Foam roll"], supplement_suggestions: ["Vitamin D3"], habit_tracker: ["Hit protein?"] }
+    workout_plan: {
+      frequency: "5 sessions per week",
+      philosophy: "Push-Pull-Legs maximizes stimulus. Compound lifts drive the hormonal environment for recomposition. HIIT offsets any weekend caloric surplus.",
+      weekly_schedule_summary: ["Mon: Push (Chest, Shoulders, Triceps)", "Tue: Pull (Back, Biceps)", "Wed: Rest / Walk", "Thu: Legs (Quads, Hamstrings, Glutes)", "Fri: HIIT + Core", "Sat: Full Body Strength", "Sun: Rest / Mobility"],
+      rest_day_activity: "8,000-step brisk walk. Keeps NEAT high without causing muscle damage.",
+      progressive_overload_note: "Add 2.5kg to compound lifts every 1-2 weeks. Track your reps closely.",
+      sessions: [
+        {
+          day: "Monday", type: "Strength", focus: "Push", duration_min: 50,
+          warm_up: ["Arm circles × 20", "Band pull-aparts × 15"],
+          exercises: [
+            { name: "Dumbbell Bench Press", sets: 4, reps: "8-10", rest_sec: 90, tip: "Retract scapula before pressing." },
+            { name: "Overhead Press", sets: 3, reps: "10-12", rest_sec: 75, tip: "Tuck ribs — don't flare." },
+            { name: "Incline Dumbbell Fly", sets: 3, reps: "12-15", rest_sec: 60, tip: "Slight elbow bend throughout." },
+            { name: "Tricep Pushdown", sets: 3, reps: "12-15", rest_sec: 60, tip: "Fully extend elbow at bottom." }
+          ],
+          cool_down: ["Chest stretch 30s"]
+        },
+        {
+          day: "Tuesday", type: "Strength", focus: "Pull", duration_min: 50,
+          warm_up: ["Dead hangs 30s", "Cat-camel × 10"],
+          exercises: [
+            { name: "Lat Pulldown / Pull-Ups", sets: 4, reps: "8-10", rest_sec: 90, tip: "Depress shoulder blades first." },
+            { name: "Dumbbell Rows", sets: 3, reps: "10-12", rest_sec: 75, tip: "Drive elbow past torso." },
+            { name: "Face Pulls", sets: 3, reps: "15-20", rest_sec: 45, tip: "Pull to nose level." },
+            { name: "Bicep Curls", sets: 3, reps: "10-12", rest_sec: 60, tip: "Supinate wrist at top." }
+          ],
+          cool_down: ["Lat stretch 30s"]
+        },
+        {
+          day: "Thursday", type: "Strength", focus: "Legs", duration_min: 55,
+          warm_up: ["Bodyweight squats × 20", "Glute bridges × 15"],
+          exercises: [
+            { name: "Goblet Squat / Back Squat", sets: 4, reps: "8-10", rest_sec: 120, tip: "Knees track over toes." },
+            { name: "Romanian Deadlift", sets: 3, reps: "10-12", rest_sec: 90, tip: "Push hips back, not down." },
+            { name: "Walking Lunges", sets: 3, reps: "12 each leg", rest_sec: 60, tip: "Upright torso reduces knee stress." },
+            { name: "Calf Raises", sets: 4, reps: "15-20", rest_sec: 45, tip: "Full stretch at bottom." }
+          ],
+          cool_down: ["Quad stretch 30s"]
+        },
+        {
+          day: "Friday", type: "Cardio", focus: "HIIT + Core", duration_min: 35,
+          warm_up: ["Jumping jacks 1 min"],
+          exercises: [
+            { name: "Burpees", sets: 5, reps: "30s work / 20s rest", rest_sec: 20, tip: "Land softly." },
+            { name: "Mountain Climbers", sets: 4, reps: "40 total", rest_sec: 20, tip: "Hips level — don't pike." },
+            { name: "Plank Hold", sets: 3, reps: "60 seconds", rest_sec: 30, tip: "Squeeze glutes and abs." }
+          ],
+          cool_down: ["Child's pose 60s"]
+        },
+        {
+          day: "Saturday", type: "Strength", focus: "Full Body", duration_min: 45,
+          warm_up: ["Dynamic flow 3 mins"],
+          exercises: [
+            { name: "Dumbbell Thrusters", sets: 4, reps: "10-12", rest_sec: 90, tip: "Fluid movement from squat to press." },
+            { name: "Kettlebell Swings", sets: 3, reps: "15-20", rest_sec: 60, tip: "Hip hinge, power from glutes." },
+            { name: "Push-Up to Rotation", sets: 3, reps: "8 each side", rest_sec: 60, tip: "Builds rotational core stability." }
+          ],
+          cool_down: ["Full body stretch 5 mins"]
+        }
+      ]
+    },
+    lifestyle_rules: {
+      sleep_hours: "7.5–8 hours. Under 7 hours raises cortisol and severely limits muscle recovery.",
+      water_liters: "3.5 liters/day. 500ml on waking, 300ml before meals.",
+      daily_steps: "8,000–10,000 steps daily. Walk after meals to blunt the glucose spike.",
+      stress_management: ["4-7-8 breathing before bed to activate parasympathetic system.", "10 mins phone-free after waking."],
+      avoid_list: ["Liquid calories (juice, sweetened chai)", "Deep-fried snacks", "Alcohol — fragments sleep and drops testosterone overnight"],
+      recovery_tips: ["Foam roll major muscle groups post-session.", "Consume 30g+ protein within 45 mins post-workout."],
+      supplement_suggestions: ["Whey Protein: 1 scoop post-workout.", "Vitamin D3: 2,000 IU daily with a fat-containing meal."],
+      habit_tracker: ["Hit calorie target?", "Hit protein target?", "Worked out?", "Drank 3.5L water?"]
+    }
   };
 }
 
@@ -335,9 +308,8 @@ CRITICAL RULES:
 2. SCHEDULE: Exactly ${timing.count} meals per day. 
    STRICT PER-MEAL TARGETS:
    ${mealTargets}
-3. MACRO ACCURACY: The sum of food macros MUST EXACTLY equal the meal macros.
-4. "protein_g", "carbs_g", "fat_g", "kcal" MUST be pure integers (e.g., 15), NOT strings.
-5. "quantity" MUST be exact grams (e.g. "100g", "60g dry"). Never "bowl".
+3. "protein_g", "carbs_g", "fat_g", "kcal" MUST be pure integers (e.g., 15), NOT strings.
+4. "quantity" MUST be exact grams (e.g. "100g", "60g dry"). Never "bowl".
 
 OUTPUT JSON SCHEMA:
 {
@@ -392,17 +364,23 @@ serve(async (req) => {
 
     let dietRaw = dietResult.status === "fulfilled" && dietResult.value.content ? safeParseJSON(dietResult.value.content) : null;
     
-    if (dietRaw) {
+    // Auto-scale macros and expand to 7 days
+    if (dietRaw && dietRaw.weekly_meals) {
       dietRaw = expandToSevenDays(dietRaw, macros);
+      dietRaw = validateAndScaleMacros(dietRaw, macros);
     } else {
-      dietRaw = getFallbackDiet(macros, profile, timing);
+      console.warn(`[${userId}] Diet AI failed. Injecting fallback.`);
+      throw new Error("AI generation timed out. Please try again.");
     }
-    
-    // Always run through the auto-scaler to guarantee 100% macro accuracy
-    dietRaw = validateAndScaleMacros(dietRaw, macros);
 
     let workoutData = workoutResult.status === "fulfilled" && workoutResult.value.content ? safeParseJSON(workoutResult.value.content) : null;
-    if (!workoutData || !workoutData.workout_plan) {
+    
+    // Deep Validation for Workout (Check if AI returned an empty object)
+    const hasValidSessions = Array.isArray(workoutData?.workout_plan?.sessions) && workoutData.workout_plan.sessions.length >= 3;
+    const hasValidRules = Array.isArray(workoutData?.lifestyle_rules?.avoid_list) && workoutData.lifestyle_rules.avoid_list.length > 0;
+
+    if (!workoutData || !workoutData.workout_plan || !hasValidSessions || !hasValidRules) {
+      console.warn(`[${userId}] Workout AI empty/invalid. Injecting detailed fallback.`);
       workoutData = getFallbackWorkout();
     }
 

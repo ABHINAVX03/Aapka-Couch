@@ -25,7 +25,6 @@ function ensureArray(val: any): any[] {
   return [val];
 }
 
-// AI Bulletproofing: Extracts raw numbers from hallucinated strings (e.g. "400 kcal" -> 400)
 function parseNum(val: any): number {
   if (typeof val === 'number') return val;
   if (!val) return 0;
@@ -33,7 +32,7 @@ function parseNum(val: any): number {
   return match ? parseFloat(match[0]) : 0;
 }
 
-// Indestructible Data Normalizers
+// -------------------- Indestructible Normalizers --------------------
 function normalizeFood(raw: any) {
   if (!raw || typeof raw !== 'object') {
     return { name: String(raw || 'Food item'), quantity: '1 serving', kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 };
@@ -67,6 +66,7 @@ function normalizeMeal(raw: any, index: number) {
   return { time: raw.time || raw.Time || `Meal ${index + 1}`, name, kcal, protein_g, carbs_g, fat_g, foods, tip: raw.tip ?? raw.Tip ?? raw.note ?? '' };
 }
 
+// -------------------- UI Components --------------------
 function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
   const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
   const eaten = log?.eaten ?? false
@@ -116,32 +116,20 @@ function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number;
       <div className="relative w-14 h-14">
         <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
           <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
-          <circle
-            cx="35" cy="35" r={r}
-            stroke={pct === 100 ? '#3dd68c' : pct >= 50 ? '#f4a623' : '#60a5fa'}
-            strokeWidth="6" fill="none"
-            strokeDasharray={circ}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
-          />
+          <circle cx="35" cy="35" r={r} stroke={pct === 100 ? '#3dd68c' : pct >= 50 ? '#f4a623' : '#60a5fa'} strokeWidth="6" fill="none" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
         </svg>
         <span className="absolute inset-0 flex items-center justify-center text-xs font-extrabold font-mono text-white">{pct}%</span>
       </div>
       <div>
         <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">Today's Adherence</p>
         <p className="text-sm font-bold text-white">{eaten}/{total} meals eaten</p>
-        {streak > 0 && (
-          <p className="text-xs text-orange-400 font-mono mt-0.5">🔥 {streak} day streak</p>
-        )}
+        {streak > 0 && <p className="text-xs text-orange-400 font-mono mt-0.5">🔥 {streak} day streak</p>}
       </div>
     </div>
   )
 }
 
-function MacroRing({ label, consumed, target, color, unit = 'g' }: {
-  label: string; consumed: number; target: number; color: string; unit?: string
-}) {
+function MacroRing({ label, consumed, target, color, unit = 'g' }: { label: string; consumed: number; target: number; color: string; unit?: string }) {
   const pct = target > 0 ? Math.min(100, Math.round((consumed / target) * 100)) : 0
   const r = 32
   const circ = 2 * Math.PI * r
@@ -151,9 +139,7 @@ function MacroRing({ label, consumed, target, color, unit = 'g' }: {
       <div className="relative w-20 h-20">
         <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
           <circle cx="40" cy="40" r={r} stroke="#222230" strokeWidth="7" fill="none" />
-          <circle cx="40" cy="40" r={r} stroke={color} strokeWidth="7" fill="none"
-            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
-            style={{ transition: 'stroke-dashoffset 0.7s cubic-bezier(0.4,0,0.2,1)' }} />
+          <circle cx="40" cy="40" r={r} stroke={color} strokeWidth="7" fill="none" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.7s cubic-bezier(0.4,0,0.2,1)' }} />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-sm font-extrabold text-white font-mono">{pct}%</span>
@@ -202,6 +188,57 @@ function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
         <MacroRing label="Protein" consumed={Math.round(consumedP)} target={targets.protein_g || 0} color="#3dd68c" />
         <MacroRing label="Carbs" consumed={Math.round(consumedC)} target={targets.carbs_g || 0} color="#60a5fa" />
         <MacroRing label="Fat" consumed={Math.round(consumedF)} target={targets.fat_g || 0} color="#f4a623" />
+      </div>
+    </div>
+  )
+}
+
+// -------------------- FULL SCREEN IMMERSIVE LOADING --------------------
+function GeneratingScreen({ name, week }: { name: string; week: number }) {
+  const [stepIdx, setStepIdx] = useState(0)
+  
+  const formattedName = name ? name.split(' ')[0] : 'your'
+
+  const STEPS = [
+    { icon: '⚖️', label: `Analyzing ${formattedName}'s weekly progress…` },
+    { icon: '🔥', label: `Recalculating macros & targets for Week ${week}…` },
+    { icon: '🥩', label: 'Setting exact food splits (Protein, Carbs, Fats)…' },
+    { icon: '🍱', label: `Structuring 7-day intelligent meal plan…` },
+    { icon: '🏋️', label: `Designing periodized workout split…` },
+    { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
+    { icon: '🚀', label: 'Finalizing AapkaCoach Master Plan…' },
+  ]
+
+  useEffect(() => {
+    // Progress through steps every 3.5 seconds
+    const t = setInterval(() => setStepIdx(i => Math.min(i + 1, STEPS.length - 1)), 3500)
+    return () => clearInterval(t)
+  }, [STEPS.length])
+  
+  const s = STEPS[stepIdx]
+  
+  return (
+    <div className="min-h-screen bg-[#0c0c10]/95 backdrop-blur-2xl text-white flex flex-col items-center justify-center gap-6 px-6 fixed inset-0 z-[100]">
+      <div className="text-7xl animate-bounce drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">{s.icon}</div>
+      <div className="text-center max-w-sm">
+        <p className="text-2xl font-bold font-mono text-white leading-relaxed">{s.label}</p>
+        <p className="text-sm text-yellow-500 mt-3 animate-pulse">DeepSeek AI is working. Do not close this tab.</p>
+      </div>
+      
+      <div className="w-full max-w-sm space-y-2.5 mt-8">
+        {STEPS.map((step, i) => (
+          <div key={i} className={`flex items-center gap-3 text-sm font-mono transition-all duration-300 ${i === stepIdx ? 'text-yellow-400 scale-105 origin-left' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
+            <span className="w-5">{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
+            <span className={i === stepIdx ? 'font-bold' : ''}>{step.label}</span>
+          </div>
+        ))}
+      </div>
+      
+      <div className="w-full max-w-sm bg-[#17171f] rounded-full h-2 border border-[#222230] mt-6 overflow-hidden">
+        <div 
+          className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700 ease-out" 
+          style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} 
+        />
       </div>
     </div>
   )
@@ -324,7 +361,11 @@ export default function DashboardPage() {
   if (loading) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">Loading AapkaCoach profile...</div>
 
   return (
-    <div className="min-h-screen bg-[#0c0c10] text-white">
+    <div className="min-h-screen bg-[#0c0c10] text-white relative">
+      
+      {/* 🟢 FULL SCREEN OVERLAY: Renders heavily on top of the dashboard while generating */}
+      {generating && <GeneratingScreen name={userName} week={!plan ? 1 : nextWeek} />}
+
       <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
         <h1 className="text-2xl font-extrabold tracking-tight cursor-pointer" onClick={() => router.push('/dashboard')}>
           Aapka<span className="text-yellow-500">Coach</span>
@@ -344,21 +385,20 @@ export default function DashboardPage() {
         {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4 text-red-400 text-sm font-mono">{error}</div>}
 
         {!plan ? (
-          generating ? (
-            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
-              <h2 className="text-2xl font-bold mb-3 text-white">Generating Plan...</h2>
-              <p className="text-gray-400 text-sm mb-6">Analyzing macros and formulating strict 7-day schedule.</p>
-            </div>
-          ) : (
-            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
-              <div className="text-5xl mb-4">📋</div>
-              <h2 className="text-2xl font-bold mb-3 text-white">No Active Plan Found</h2>
-              <p className="text-gray-400 text-sm mb-6 leading-relaxed">We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.</p>
-              <button onClick={() => generateNextWeek()} disabled={generating} className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50">
-                Generate My AI Plan 🤖
-              </button>
-            </div>
-          )
+          <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center my-12 max-w-xl mx-auto shadow-2xl">
+            <div className="text-6xl mb-6 drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">🚀</div>
+            <h2 className="text-2xl font-bold mb-3 text-white">Generate Your Master Plan</h2>
+            <p className="text-gray-400 text-sm mb-8 leading-relaxed px-4">
+              We'll calculate your exact recomp macros, design your periodized workout splits, and arrange meals perfectly matching your dietary preferences.
+            </p>
+            <button 
+              onClick={() => generateNextWeek()} 
+              disabled={generating} 
+              className="w-full sm:w-auto px-10 py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-2xl hover:bg-yellow-400 transition-all shadow-[0_0_20px_rgba(234,179,8,0.3)] disabled:opacity-50"
+            >
+              Generate Week 1 Plan
+            </button>
+          </div>
         ) : (
           <div>
             <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-4 mb-4 flex flex-col gap-4">
@@ -452,7 +492,7 @@ export default function DashboardPage() {
                 <p className="text-xs text-gray-500 mb-3">Add optional notes before generating your next plan.</p>
                 <textarea value={planFeedback} onChange={e => setPlanFeedback(e.target.value)} placeholder="e.g. more variety, less rice..." className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-sm resize-none min-h-[80px] focus:border-yellow-500 outline-none mb-3" />
                 <button onClick={generateNextWeek} disabled={generating} className="w-full py-3 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50">
-                  {generating ? '🧠 Generating Week ' + nextWeek + '…' : '🚀 Generate Week ' + nextWeek}
+                  🚀 Generate Week {nextWeek}
                 </button>
               </div>
             )}
