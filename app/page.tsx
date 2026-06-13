@@ -17,8 +17,8 @@ function MacroRing() {
 
   const macros = [
     { label: 'Protein', pct: 0.35, color: '#F5C518', offset: 0 },
-    { label: 'Carbs',   pct: 0.42, color: '#ff9500', offset: 0.35 },
-    { label: 'Fat',     pct: 0.23, color: '#ffffff',  offset: 0.77 },
+    { label: 'Carbs', pct: 0.42, color: '#ff9500', offset: 0.35 },
+    { label: 'Fat', pct: 0.23, color: '#ffffff', offset: 0.77 },
   ]
 
   return (
@@ -28,7 +28,7 @@ function MacroRing() {
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1e1e2e" strokeWidth="18" />
         {macros.map((m, i) => {
           const dash = circumference * m.pct
-          const gap  = circumference - dash
+          const gap = circumference - dash
           const offsetDash = circumference * m.offset
           return (
             <circle
@@ -406,9 +406,9 @@ export default function HomePage() {
           <div style={{ maxWidth: 900, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 32, textAlign: 'center' }}>
             {[
               { val: 2400, suffix: '+', label: 'Plans generated' },
-              { val: 94,   suffix: '%', label: 'Hit macro targets' },
-              { val: 10,   suffix: ' weeks', label: 'Avg. first result' },
-              { val: 0,    suffix: ' ads',   label: 'In our product' },
+              { val: 94, suffix: '%', label: 'Hit macro targets' },
+              { val: 10, suffix: ' weeks', label: 'Avg. first result' },
+              { val: 0, suffix: ' ads', label: 'In our product' },
             ].map((s, i) => (
               <FadeIn key={i} delay={i * 80}>
                 <div className="display" style={{ fontSize: 36, fontWeight: 800, color: 'var(--gold)', letterSpacing: '-1px' }}>
@@ -559,6 +559,9 @@ export default function HomePage() {
           </div>
           <p style={{ margin: 0 }}>
             © {new Date().getFullYear()} AapkaCoach — Built for Indian bodies, by people who understand.
+          </p>
+          <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--faint)' }}>
+            🇮🇳 Made in India by <span style={{ color: 'var(--muted)' }}>Abhinav Gupta</span>
           </p>
         </footer>
 

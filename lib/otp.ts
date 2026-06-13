@@ -56,6 +56,58 @@ export async function sendOTPEmail(email: string, otp: string): Promise<boolean>
   }
 }
 
+// ─────────────────────────────────────────────
+// NEW: Send Account Deletion Confirmation Email
+// ─────────────────────────────────────────────
+export async function sendAccountDeletionEmail(email: string): Promise<boolean> {
+  try {
+    const transporter = getEmailTransporter()
+    
+    // Format date in Indian Standard Time
+    const deleteDate = new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'full',
+      timeStyle: 'long'
+    })
+
+    const mailOptions = {
+      from: process.env.GMAIL_USER,
+      to: email,
+      subject: 'Farewell from AapkaCoach - Account Deleted',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #0c0c10;">Account Deletion Confirmation</h2>
+          <p>Hello,</p>
+          <p>This email is to confirm that your AapkaCoach account associated with <strong>${email}</strong> has been successfully and permanently deleted.</p>
+          
+          <div style="background: #17171f; padding: 20px; border-radius: 8px; margin: 20px 0; color: #fff;">
+            <p style="margin: 0 0 10px 0;"><strong style="color: #fbbf24;">Action:</strong> Account & Data Deletion</p>
+            <p style="margin: 0;"><strong style="color: #fbbf24;">Timestamp:</strong> ${deleteDate}</p>
+          </div>
+
+          <p><strong>What happens now?</strong></p>
+          <ul style="color: #444;">
+            <li>Your personal body scan data has been wiped.</li>
+            <li>Your AI-generated meal and workout plans have been archived/deleted.</li>
+            <li>Your email has been removed from our active system.</li>
+          </ul>
+
+          <p>We're sorry to see you go! If you ever wish to return and restart your fitness journey, you can always create a new account using this same email.</p>
+          
+          <p style="color: #666; font-size: 14px; margin-top: 30px;">Stay healthy,<br/><strong>Team AapkaCoach</strong></p>
+        </div>
+      `,
+    }
+
+    await transporter.sendMail(mailOptions)
+    console.log(`✓ Deletion confirmation sent to ${email}`)
+    return true
+  } catch (error) {
+    console.error('Error sending deletion email:', error)
+    return false
+  }
+}
+
 // Store OTP in database
 export async function storeOTP(email: string, otp: string): Promise<boolean> {
   try {

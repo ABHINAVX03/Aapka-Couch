@@ -3,7 +3,6 @@ import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
 import { hashToken } from '@/lib/otp'
 
-// GET /api/meal-plans — returns all plans (summary list, not full JSON)
 export async function GET() {
   try {
     const cookieStore = await cookies()
@@ -20,9 +19,10 @@ export async function GET() {
 
     if (!session) return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
 
+    // ✅ FIX: Added plan_week to the select statement so the UI stops showing Week 0
     const { data: plans, error } = await supabaseAdmin
       .from('meal_plans')
-      .select('id, generated_at, plan_json')
+      .select('id, generated_at, plan_json, plan_week')
       .eq('user_id', session.user_id)
       .order('generated_at', { ascending: false })
       .limit(10)

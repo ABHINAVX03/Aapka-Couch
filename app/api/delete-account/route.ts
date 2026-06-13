@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
-import { hashToken } from '@/lib/otp'
+import { hashToken, sendAccountDeletionEmail } from '@/lib/otp'
 
 export async function POST(req: Request) {
   try {
@@ -59,6 +59,15 @@ export async function POST(req: Request) {
       console.error('Account deletion failed:', deleteError)
       return NextResponse.json({ error: 'Failed to delete account.' }, { status: 500 })
     }
+
+    // ─────────────────────────────────────────────
+    // NEW: Fire off the account deletion confirmation email
+    // ─────────────────────────────────────────────
+    // We use .catch() here so that if the email fails to send for some reason, 
+    // it doesn't crash the API response and the user still gets logged out properly.
+    await sendAccountDeletionEmail(user.email).catch(err => {
+      console.error('Non-fatal error: Failed to send deletion email', err)
+    });
 
     cookieStore.delete('auth-token')
     return NextResponse.json({ message: 'Account deleted successfully.' })

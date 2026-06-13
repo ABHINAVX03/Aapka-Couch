@@ -30,6 +30,106 @@ async function hashTokenDeno(token: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+function ensureArray(val: any): any[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return [val];
+}
+
+// ─────────────────────────────────────────────
+// INDIAN FOOD DATABASE (Per 100g/100ml)
+// ─────────────────────────────────────────────
+const FOOD_DB: Record<string, [number, number, number, number]> = {
+  "whey protein isolate":   [80, 4,  1,  0],
+  "whey protein":           [75, 5,  2,  0],
+  "paneer":                 [18, 3,  14, 0],
+  "tofu":                   [16, 3,  8,  1],
+  "eggs":                   [13, 1,  11, 0],
+  "boiled eggs":            [13, 1,  11, 0],
+  "egg whites":             [11, 1,  0,  0],
+  "curd":                   [4,  4,  4,  0],
+  "low fat curd":           [5,  5,  2,  0],
+  "greek yogurt":           [9,  4,  0,  0],
+  "chicken breast":         [31, 0,  4,  0],
+  "soya chunks dry":        [52, 33, 1,  13],
+  "soya chunks cooked":     [17, 11, 0,  4],
+  "fish":                   [22, 0,  5,  0],
+  "oats":                   [13, 66, 7,  10],
+  "brown rice dry":         [7,  76, 3,  4],
+  "brown rice cooked":      [3,  23, 1,  2],
+  "white rice dry":         [7,  80, 1,  1],
+  "white rice cooked":      [3,  28, 0,  0],
+  "roti":                   [9,  45, 3,  6], 
+  "chapati":                [9,  45, 3,  6],
+  "wheat flour":            [12, 73, 2,  12],
+  "bread brown":            [9,  41, 4,  7],
+  "poha":                   [2,  76, 1,  1],
+  "upma":                   [3,  18, 2,  1],
+  "banana":                 [1,  23, 0,  3],
+  "apple":                  [0,  14, 0,  2],
+  "sweet potato":           [2,  20, 0,  3],
+  "potato":                 [2,  17, 0,  2],
+  "masoor dal dry":         [24, 59, 1,  15],
+  "masoor dal cooked":      [9,  20, 0,  8],
+  "moong dal cooked":       [7,  18, 0,  8],
+  "rajma cooked":           [9,  22, 0,  7],
+  "chana dal cooked":       [9,  27, 3,  8],
+  "chickpeas cooked":       [9,  27, 3,  8],
+  "peanut butter":          [25, 20, 50, 6],
+  "almond butter":          [21, 22, 51, 4],
+  "ghee":                   [0,  0,  100,0],
+  "olive oil":              [0,  0,  100,0],
+  "almonds":                [21, 22, 49, 13],
+  "peanuts":                [26, 16, 49, 9],
+  "milk whole":             [3,  5,  4,  0],
+  "milk low fat":           [4,  5,  2,  0],
+  "milk toned":             [3,  5,  3,  0],
+  "mixed vegetables":       [2,  8,  0,  3],
+  "broccoli":               [3,  7,  0,  3],
+  "spinach":                [3,  4,  0,  2],
+  "cucumber":               [1,  4,  0,  1],
+};
+
+// 🟢 FIX 2: Upgraded regex parser that understands "Eggs", "Whites", and "Roti"
+function lookupMacros(foodName: string, quantityStr: string): { protein_g: number; carbs_g: number; fat_g: number; fiber_g: number; kcal: number } | null {
+  const key = foodName.toLowerCase().replace(/\(.*?\)/g, "").trim();
+  const entry = FOOD_DB[key] ?? Object.entries(FOOD_DB).find(([k]) => key.includes(k) || k.includes(key))?.[1];
+  if (!entry) return null;
+  
+  const match = quantityStr.match(/([\d.]+)\s*([a-zA-Z]+)?/i);
+  if (!match) return null;
+  
+  const amount = parseFloat(match[1]);
+  const unit   = (match[2] || "").toLowerCase().trim();
+  
+  let grams = amount;
+  if (unit === "kg" || unit === "l" || unit === "liters") {
+    grams = amount * 1000;
+  } else if (unit.includes("egg") || (key.includes("egg") && !unit.includes("g"))) {
+    grams = amount * 50; // 1 whole egg ~ 50g
+  } else if (unit.includes("white") || (key.includes("white") && !unit.includes("g"))) {
+    grams = amount * 33; // 1 egg white ~ 33g
+  } else if (unit.includes("roti") || unit.includes("chapati") || ((key.includes("roti") || key.includes("chapati")) && !unit.includes("g"))) {
+    grams = amount * 40; // 1 roti ~ 40g
+  } else if (unit.includes("ml")) {
+    grams = amount;
+  } else if (!unit.includes("g")) {
+    // Catch-all for pieces of fruit/veg without a specific unit
+    if (key.includes("apple") || key.includes("banana") || key.includes("potato")) grams = amount * 100;
+  }
+  
+  const factor = grams / 100;
+  const [p, c, f, fib] = entry;
+  
+  const protein_g = Math.round(p * factor);
+  const carbs_g   = Math.round(c * factor);
+  const fat_g     = Math.round(f * factor);
+  const fiber_g   = Math.round(fib * factor);
+  const kcal      = Math.round(protein_g * 4 + carbs_g * 4 + fat_g * 9);
+  
+  return { protein_g, carbs_g, fat_g, fiber_g, kcal };
+}
+
 // ─────────────────────────────────────────────
 // MACRO MATH ENGINE
 // ─────────────────────────────────────────────
@@ -89,12 +189,6 @@ function getMealTimingConfig(pref: string): TimingConfig {
   }
 }
 
-function ensureArray(val: any): any[] {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  return [val];
-}
-
 // ─────────────────────────────────────────────
 // DIET VALIDATOR & AUTO-SCALER
 // ─────────────────────────────────────────────
@@ -102,79 +196,71 @@ function validateAndScaleMacros(plan: any, macros: MacroTargets): any {
   const weeklyMeals = ensureArray(plan.weekly_meals);
   if (weeklyMeals.length === 0) return plan;
 
-  const targetP = macros.protein_g;
-  const targetC = macros.carbs_g;
-  const targetF = macros.fat_g;
-
   const fixed = weeklyMeals.map((day: any) => {
     const meals = ensureArray(day.meals);
-    const parsedMeals = meals.map((meal: any) => {
+    const recomputedMeals = meals.map((meal: any) => {
       const foodsRaw = ensureArray(meal.foods || meal.ingredients || meal.items);
-      const normalizedFoods = foodsRaw.map((food: any) => {
-        const p = Math.round(safeNum(food.protein_g ?? food.protein ?? food.Protein));
-        const c = Math.round(safeNum(food.carbs_g ?? food.carbs ?? food.Carbs));
-        const f = Math.round(safeNum(food.fat_g ?? food.fat ?? food.Fat));
-        const fib = Math.round(safeNum(food.fiber_g ?? food.fiber ?? food.Fiber));
-        return { name: String(food.name || "Food"), quantity: String(food.quantity || "1 serving"), protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: (p * 4) + (c * 4) + (f * 9) };
+      const foods = foodsRaw.map((food: any) => {
+        const name     = String(food.name || "Food");
+        const quantity = String(food.quantity || "100g");
+        
+        const fromDB = lookupMacros(name, quantity);
+        if (fromDB) return { name, quantity, ...fromDB };
+
+        const p   = Math.round(safeNum(food.protein_g ?? food.protein));
+        const c   = Math.round(safeNum(food.carbs_g   ?? food.carbs));
+        const f   = Math.round(safeNum(food.fat_g     ?? food.fat));
+        const fib = Math.round(safeNum(food.fiber_g   ?? food.fiber));
+        return { name, quantity, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: p*4 + c*4 + f*9 };
       });
-      return { ...meal, foods: normalizedFoods };
+
+      const mP   = foods.reduce((s: number, f: any) => s + f.protein_g, 0);
+      const mC   = foods.reduce((s: number, f: any) => s + f.carbs_g,   0);
+      const mF   = foods.reduce((s: number, f: any) => s + f.fat_g,     0);
+      const mFib = foods.reduce((s: number, f: any) => s + f.fiber_g,   0);
+      return { ...meal, foods, protein_g: mP, carbs_g: mC, fat_g: mF, fiber_g: mFib, kcal: mP*4 + mC*4 + mF*9 };
     });
 
-    let currP = 0, currC = 0, currF = 0;
-    parsedMeals.forEach((m: any) => m.foods.forEach((f: any) => { currP += f.protein_g; currC += f.carbs_g; currF += f.fat_g; }));
-    if (currP === 0) currP = 1;
-    if (currC === 0) currC = 1;
-    if (currF === 0) currF = 1;
+    const dayP = recomputedMeals.reduce((s: number, m: any) => s + m.protein_g, 0);
+    const dayC = recomputedMeals.reduce((s: number, m: any) => s + m.carbs_g,   0);
+    const dayF = recomputedMeals.reduce((s: number, m: any) => s + m.fat_g,     0);
 
-    const ratioP = targetP / currP;
-    const ratioC = targetC / currC;
-    const ratioF = targetF / currF;
-    let newDayP = 0, newDayC = 0, newDayF = 0;
+    if (dayP === 0 && dayC === 0 && dayF === 0) return { ...day, meals: recomputedMeals };
 
-    const scaledMeals = parsedMeals.map((meal: any) => {
-      let mealP = 0, mealC = 0, mealF = 0, mealFib = 0;
+    const ratioP = macros.protein_g / Math.max(dayP, 1);
+    const ratioC = macros.carbs_g   / Math.max(dayC, 1);
+    const ratioF = macros.fat_g     / Math.max(dayF, 1);
+    
+    const scale = (ratioP + ratioC + ratioF) / 3;
+    const shouldScale = Math.abs(scale - 1) > 0.10;
+
+    const scaledMeals = recomputedMeals.map((meal: any) => {
       const scaledFoods = meal.foods.map((food: any) => {
-        const p = Math.round(food.protein_g * ratioP);
-        const c = Math.round(food.carbs_g * ratioC);
-        const f = Math.round(food.fat_g * ratioF);
-        const fib = Math.round(food.fiber_g * ratioC);
-        let qty = food.quantity;
-        const avgRatio = (ratioP + ratioC + ratioF) / 3;
-        if (Math.abs(avgRatio - 1) > 0.10) {
-          qty = qty.replace(/\b\d+(\.\d+)?\b/g, (match: string) => Math.round(parseFloat(match) * avgRatio).toString());
-        }
-        mealP += p; mealC += c; mealF += f; mealFib += fib;
-        return { ...food, quantity: qty, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: (p * 4) + (c * 4) + (f * 9) };
+        if (!shouldScale) return food;
+        const newQty = food.quantity.replace(/([\d.]+)/, (match: string) => Math.round(parseFloat(match) * scale).toString());
+        
+        const fromDB = lookupMacros(food.name, newQty);
+        if (fromDB) return { ...food, quantity: newQty, ...fromDB };
+
+        const p   = Math.round(food.protein_g * ratioP);
+        const c   = Math.round(food.carbs_g   * ratioC);
+        const f   = Math.round(food.fat_g     * ratioF);
+        const fib = Math.round(food.fiber_g   * ratioC);
+        return { ...food, quantity: newQty, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: p*4+c*4+f*9 };
       });
-      newDayP += mealP; newDayC += mealC; newDayF += mealF;
-      return { ...meal, foods: scaledFoods, protein_g: mealP, carbs_g: mealC, fat_g: mealF, fiber_g: mealFib, kcal: (mealP * 4) + (mealC * 4) + (mealF * 9) };
+
+      const mP   = scaledFoods.reduce((s: number, f: any) => s + f.protein_g, 0);
+      const mC   = scaledFoods.reduce((s: number, f: any) => s + f.carbs_g,   0);
+      const mF   = scaledFoods.reduce((s: number, f: any) => s + f.fat_g,     0);
+      const mFib = scaledFoods.reduce((s: number, f: any) => s + f.fiber_g,   0);
+      return { ...meal, foods: scaledFoods, protein_g: mP, carbs_g: mC, fat_g: mF, fiber_g: mFib, kcal: mP*4+mC*4+mF*9 };
     });
 
-    const diffP = targetP - newDayP;
-    const diffC = targetC - newDayC;
-    const diffF = targetF - newDayF;
-    if ((diffP !== 0 || diffC !== 0 || diffF !== 0) && scaledMeals.length > 0) {
-      const lastMeal = scaledMeals[scaledMeals.length - 1];
-      if (lastMeal.foods.length > 0) {
-        const lastFood = lastMeal.foods[lastMeal.foods.length - 1];
-        lastFood.protein_g = Math.max(0, lastFood.protein_g + diffP);
-        lastFood.carbs_g = Math.max(0, lastFood.carbs_g + diffC);
-        lastFood.fat_g = Math.max(0, lastFood.fat_g + diffF);
-        lastFood.kcal = (lastFood.protein_g * 4) + (lastFood.carbs_g * 4) + (lastFood.fat_g * 9);
-        lastMeal.protein_g += diffP; lastMeal.carbs_g += diffC; lastMeal.fat_g += diffF;
-        lastMeal.kcal = (lastMeal.protein_g * 4) + (lastMeal.carbs_g * 4) + (lastMeal.fat_g * 9);
-        newDayP += diffP; newDayC += diffC; newDayF += diffF;
-      }
-    }
+    const newDayP = scaledMeals.reduce((s: number, m: any) => s + m.protein_g, 0);
+    const newDayC = scaledMeals.reduce((s: number, m: any) => s + m.carbs_g,   0);
+    const newDayF = scaledMeals.reduce((s: number, m: any) => s + m.fat_g,     0);
 
-    return {
-      ...day,
-      meals: scaledMeals,
-      total_kcal: (newDayP * 4) + (newDayC * 4) + (newDayF * 9),
-      total_protein_g: newDayP,
-      total_carbs_g: newDayC,
-      total_fat_g: newDayF,
-    };
+    return { ...day, meals: scaledMeals, total_protein_g: newDayP, total_carbs_g: newDayC, total_fat_g: newDayF, total_kcal: newDayP*4 + newDayC*4 + newDayF*9 };
   });
 
   return { ...plan, weekly_meals: fixed };
@@ -191,254 +277,109 @@ function safeParseJSON(raw: string): any {
   return null;
 }
 
-function expandToSevenDays(plan: any, macros: MacroTargets): any {
-  const base = ensureArray(plan.weekly_meals);
-  if (base.length === 0) return plan;
-  if (base.length >= 7) return plan;
-
-  const d1 = base[0];
-  const d2 = base[1 % base.length];
-  const d4 = base[3 % base.length];
-
-  const extras = [
-    { ...d4, day: "Friday",   day_name: "Friday",   type: "standard", daily_note: "HIIT day — maintain intensity.",                              hydration_reminder: "500ml water pre-workout." },
-    { ...d2, day: "Saturday", day_name: "Saturday",  type: "refeed",   total_kcal: macros.calories + 200, daily_note: `Refeed day — ${macros.calories + 200} kcal to prevent metabolic adaptation.`, hydration_reminder: "Extra carbs require extra water." },
-    { ...d1, day: "Sunday",   day_name: "Sunday",    type: "rest",     daily_note: "Rest day — muscles grow outside the gym.",                   hydration_reminder: "Hydrate and prep meals for tomorrow." },
-  ];
-
-  return { ...plan, weekly_meals: [...base, ...extras] };
-}
-
 // ─────────────────────────────────────────────
-// FALLBACK DIET PLAN (fires when both AI diet calls fail)
+// 🟢 FIX 1: ENHANCED FALLBACK DIET PLAN (Eggetarian Handled Properly + 7 Full Days)
 // ─────────────────────────────────────────────
-function getFallbackDietPlan(
-  macros: MacroTargets,
-  timing: TimingConfig,
-  profile: Record<string, unknown>
-): any {
+function getFallbackDietPlan(macros: MacroTargets, timing: TimingConfig, profile: Record<string, unknown>): any {
   const dp = String(profile.dietary_pattern || "eggetarian").toLowerCase();
-  const isVegan = dp === "vegan";
+  const isVegan = dp === "vegan"; 
   const isVeg = dp === "vegetarian";
+  const isEggetarian = dp === "eggetarian";
 
-  // Pick the primary protein source for this diet type
-  const primaryProtein = isVegan
-    ? { name: "Tofu (firm)", quantity: "150g", protein_g: 12, carbs_g: 2, fat_g: 8, fiber_g: 1, kcal: 126 }
-    : isVeg
-    ? { name: "Paneer", quantity: "100g", protein_g: 18, carbs_g: 3, fat_g: 14, fiber_g: 0, kcal: 210 }
-    : { name: "Boiled eggs", quantity: "3 eggs", protein_g: 18, carbs_g: 1, fat_g: 10, fiber_g: 0, kcal: 166 };
+  // Isolate proteins correctly to stop Fish from entering an Eggetarian plan
+  const proteins = isVegan 
+    ? ["Tofu", "Soya chunks dry", "Masoor dal dry", "Chickpeas cooked"] 
+    : isVeg 
+    ? ["Paneer", "Low fat curd", "Soya chunks dry", "Greek yogurt"] 
+    : isEggetarian
+    ? ["Boiled eggs", "Egg whites", "Paneer", "Greek yogurt", "Soya chunks dry"]
+    : ["Chicken breast", "Boiled eggs", "Fish", "Egg whites", "Paneer"];
+  
+  const carbs = ["Oats", "White rice dry", "Roti", "Poha", "Brown rice dry", "Sweet potato", "Banana"];
+  const veggies = ["Mixed vegetables", "Spinach", "Broccoli", "Cucumber"];
 
-  const secondaryProtein = isVegan
-    ? { name: "Masoor dal (cooked)", quantity: "150g", protein_g: 9, carbs_g: 20, fat_g: 0, fiber_g: 8, kcal: 116 }
-    : { name: "Curd (low-fat)", quantity: "150g", protein_g: 8, carbs_g: 6, fat_g: 2, fiber_g: 0, kcal: 74 };
+  const buildMeal = (mealName: string, time: string, frac: number, dIdx: number, mIdx: number) => {
+    const pName = proteins[(dIdx + mIdx) % proteins.length];
+    const cName = carbs[(dIdx * 2 + mIdx) % carbs.length];
+    const vName = veggies[(dIdx + mIdx * 2) % veggies.length];
 
-  const buildMeal = (mealName: string, time: string, frac: number) => {
-    const kcal  = Math.round(macros.calories   * frac);
-    const p     = Math.round(macros.protein_g  * frac);
-    const c     = Math.round(macros.carbs_g    * frac);
-    const f     = Math.round(macros.fat_g      * frac);
+    let pQty = "100g";
+    if (pName.toLowerCase().includes("egg")) pQty = "3 eggs";
+    if (pName.toLowerCase().includes("white")) pQty = "6 whites";
+    if (pName.toLowerCase().includes("whey")) pQty = "30g";
+
+    let cQty = "60g";
+    if (cName === "Roti") cQty = "2 roti";
+    if (cName === "Banana") cQty = "150g";
 
     return {
-      time,
-      name: mealName,
-      kcal, protein_g: p, carbs_g: c, fat_g: f, fiber_g: 5,
-      prep_time_min: 10,
+      time, name: mealName, kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, prep_time_min: 10,
       foods: [
-        primaryProtein,
-        { name: "Oats / brown rice (dry)", quantity: "60g", protein_g: 5, carbs_g: 40, fat_g: 2, fiber_g: 4, kcal: 200 },
-        { name: "Mixed sabzi (stir-fried)", quantity: "100g", protein_g: 2, carbs_g: 8, fat_g: 1, fiber_g: 3, kcal: 49 },
-        secondaryProtein,
+        { name: pName, quantity: pQty, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, kcal: 0 },
+        { name: cName, quantity: cQty, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, kcal: 0 },
+        { name: vName, quantity: "100g", protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, kcal: 0 }
       ],
-      tip: "Weigh dry grains. Swap sabzi daily to avoid monotony (broccoli, beans, capsicum, carrot).",
+      tip: "Weigh dry grains. Adjust spices as needed."
     };
   };
 
-  const buildDay = (day: string, type: string, note: string) => ({
-    day, day_name: day, type,
-    total_kcal: macros.calories,
-    total_protein_g: macros.protein_g,
-    total_carbs_g: macros.carbs_g,
-    total_fat_g: macros.fat_g,
-    hydration_reminder: "3.5L water today. 500ml on waking.",
-    daily_note: note,
-    meals: timing.names.map((name, i) => buildMeal(name, timing.times[i], timing.kcalSplit[i])),
-  });
+  // Generate ALL 7 days immediately so they never duplicate
+  const daysArray = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  
+  const weekly_meals = daysArray.map((day, dIdx) => ({
+    day, day_name: day, type: "standard", 
+    total_kcal: macros.calories, total_protein_g: macros.protein_g, total_carbs_g: macros.carbs_g, total_fat_g: macros.fat_g, 
+    hydration_reminder: "3.5L water today. 500ml on waking.", daily_note: "Focus on your goals and track your meals.",
+    meals: timing.names.map((name, i) => buildMeal(name, timing.times[i], timing.kcalSplit[i], dIdx, i))
+  }));
 
   return {
-    weekly_rules: {
-      protein_strategy: `${macros.protein_g}g protein spread across ${timing.count} meals. Prioritise whole-food sources — whey post-workout only if whole foods fall short.`,
-      refeed_day: "Saturday — add ~200 kcal from complex carbs (sweet potato, banana, oats). Keep fat the same.",
-      steps_target: "8,000–10,000 steps daily. Walk 10 mins after every main meal.",
-      sleep_protocol: "7.5–8 hours. Sleep and wake at the same time daily — cortisol control matters for recomp.",
-      water_target: "3.5 litres. Spread through the day; do not chug.",
-    },
-    weekly_meals: [
-      buildDay("Monday",    "standard", "Training day — hit protein target. Pre-workout meal 90 mins before session."),
-      buildDay("Tuesday",   "standard", "Training day — focus on micronutrients. Add a seasonal fruit post-workout."),
-      buildDay("Wednesday", "standard", "Rest or light cardio. Keep calories the same; reduce carbs by ~20g if fully sedentary."),
-      buildDay("Thursday",  "standard", "Training day — heaviest lifts this week. Fuel accordingly."),
-    ],
+    weekly_rules: { protein_strategy: `Hit ${macros.protein_g}g daily.`, refeed_day: "Saturday refeed.", steps_target: "10,000 steps.", sleep_protocol: "7.5-8 hours.", water_target: "3.5 Liters." },
+    weekly_meals
   };
 }
 
-// ─────────────────────────────────────────────
-// FALLBACK WORKOUT (fires if AI returns empty/invalid)
-// ─────────────────────────────────────────────
 function getFallbackWorkout() {
   return {
     workout_plan: {
-      frequency: "5 sessions per week",
-      philosophy: "Push-Pull-Legs maximizes stimulus. Compound lifts drive the hormonal environment for recomposition. HIIT offsets any weekend caloric surplus.",
-      weekly_schedule_summary: ["Mon: Push (Chest, Shoulders, Triceps)", "Tue: Pull (Back, Biceps)", "Wed: Rest / Walk", "Thu: Legs (Quads, Hamstrings, Glutes)", "Fri: HIIT + Core", "Sat: Full Body Strength", "Sun: Rest / Mobility"],
-      rest_day_activity: "8,000-step brisk walk. Keeps NEAT high without causing muscle damage.",
-      progressive_overload_note: "Add 2.5kg to compound lifts every 1-2 weeks. Track your reps closely.",
+      frequency: "5 sessions per week", philosophy: "Push-Pull-Legs maximizes compound stimulus.", weekly_schedule_summary: ["Mon: Push", "Tue: Pull", "Wed: Rest", "Thu: Legs", "Fri: HIIT", "Sat: Full Body", "Sun: Rest"], rest_day_activity: "8,000 steps walk.", progressive_overload_note: "Add 2.5kg to compound lifts.",
       sessions: [
-        {
-          day: "Monday", type: "Strength", focus: "Push", duration_min: 50,
-          warm_up: ["Arm circles × 20", "Band pull-aparts × 15"],
-          exercises: [
-            { name: "Dumbbell Bench Press",  sets: 4, reps: "8-10",  rest_sec: 90, tip: "Retract scapula before pressing." },
-            { name: "Overhead Press",         sets: 3, reps: "10-12", rest_sec: 75, tip: "Tuck ribs — don't flare." },
-            { name: "Incline Dumbbell Fly",   sets: 3, reps: "12-15", rest_sec: 60, tip: "Slight elbow bend throughout." },
-            { name: "Tricep Pushdown",        sets: 3, reps: "12-15", rest_sec: 60, tip: "Fully extend elbow at bottom." },
-          ],
-          cool_down: ["Chest stretch 30s"],
-        },
-        {
-          day: "Tuesday", type: "Strength", focus: "Pull", duration_min: 50,
-          warm_up: ["Dead hangs 30s", "Cat-camel × 10"],
-          exercises: [
-            { name: "Lat Pulldown / Pull-Ups", sets: 4, reps: "8-10",  rest_sec: 90, tip: "Depress shoulder blades first." },
-            { name: "Dumbbell Rows",            sets: 3, reps: "10-12", rest_sec: 75, tip: "Drive elbow past torso." },
-            { name: "Face Pulls",               sets: 3, reps: "15-20", rest_sec: 45, tip: "Pull to nose level." },
-            { name: "Bicep Curls",              sets: 3, reps: "10-12", rest_sec: 60, tip: "Supinate wrist at top." },
-          ],
-          cool_down: ["Lat stretch 30s"],
-        },
-        {
-          day: "Thursday", type: "Strength", focus: "Legs", duration_min: 55,
-          warm_up: ["Bodyweight squats × 20", "Glute bridges × 15"],
-          exercises: [
-            { name: "Goblet Squat / Back Squat", sets: 4, reps: "8-10",        rest_sec: 120, tip: "Knees track over toes." },
-            { name: "Romanian Deadlift",          sets: 3, reps: "10-12",       rest_sec: 90,  tip: "Push hips back, not down." },
-            { name: "Walking Lunges",             sets: 3, reps: "12 each leg", rest_sec: 60,  tip: "Upright torso reduces knee stress." },
-            { name: "Calf Raises",                sets: 4, reps: "15-20",       rest_sec: 45,  tip: "Full stretch at bottom." },
-          ],
-          cool_down: ["Quad stretch 30s"],
-        },
-        {
-          day: "Friday", type: "Cardio", focus: "HIIT + Core", duration_min: 35,
-          warm_up: ["Jumping jacks 1 min"],
-          exercises: [
-            { name: "Burpees",          sets: 5, reps: "30s work / 20s rest", rest_sec: 20, tip: "Land softly." },
-            { name: "Mountain Climbers", sets: 4, reps: "40 total",            rest_sec: 20, tip: "Hips level — don't pike." },
-            { name: "Plank Hold",       sets: 3, reps: "60 seconds",           rest_sec: 30, tip: "Squeeze glutes and abs." },
-          ],
-          cool_down: ["Child's pose 60s"],
-        },
-        {
-          day: "Saturday", type: "Strength", focus: "Full Body", duration_min: 45,
-          warm_up: ["Dynamic flow 3 mins"],
-          exercises: [
-            { name: "Dumbbell Thrusters",    sets: 4, reps: "10-12",       rest_sec: 90, tip: "Fluid movement from squat to press." },
-            { name: "Kettlebell Swings",      sets: 3, reps: "15-20",       rest_sec: 60, tip: "Hip hinge, power from glutes." },
-            { name: "Push-Up to Rotation",   sets: 3, reps: "8 each side", rest_sec: 60, tip: "Builds rotational core stability." },
-          ],
-          cool_down: ["Full body stretch 5 mins"],
-        },
-      ],
+        { day: "Monday", type: "Strength", focus: "Push", duration_min: 50, warm_up: ["Dynamic arm warm-up"], exercises: [{ name: "Dumbbell Bench Press", sets: 4, reps: "8-10", rest_sec: 90, tip: "Scapula retracted." }, { name: "Overhead Press", sets: 3, reps: "10-12", rest_sec: 75, tip: "Core tight." }], cool_down: ["Chest stretch"] },
+        { day: "Tuesday", type: "Strength", focus: "Pull", duration_min: 50, warm_up: ["Dead hangs"], exercises: [{ name: "Lat Pulldown", sets: 4, reps: "8-10", rest_sec: 90, tip: "Drive elbows down." }, { name: "Dumbbell Rows", sets: 3, reps: "10-12", rest_sec: 75, tip: "Squeeze lats." }], cool_down: ["Lat stretch"] }
+      ]
     },
-    lifestyle_rules: {
-      sleep_hours: "7.5–8 hours. Under 7 hours raises cortisol and severely limits muscle recovery.",
-      water_liters: "3.5 liters/day. 500ml on waking, 300ml before meals.",
-      daily_steps: "8,000–10,000 steps daily. Walk after meals to blunt the glucose spike.",
-      stress_management: ["4-7-8 breathing before bed to activate parasympathetic system.", "10 mins phone-free after waking."],
-      avoid_list: ["Liquid calories (juice, sweetened chai)", "Deep-fried snacks", "Alcohol — fragments sleep and drops testosterone overnight"],
-      recovery_tips: ["Foam roll major muscle groups post-session.", "Consume 30g+ protein within 45 mins post-workout."],
-      supplement_suggestions: ["Whey Protein: 1 scoop post-workout.", "Vitamin D3: 2,000 IU daily with a fat-containing meal."],
-      habit_tracker: ["Hit calorie target?", "Hit protein target?", "Worked out?", "Drank 3.5L water?"],
-    },
+    lifestyle_rules: { sleep_hours: "7.5–8 hours.", water_liters: "3.5 liters/day.", daily_steps: "10,000 steps daily.", stress_management: ["Breathing rituals before sleep."], avoid_list: ["Liquid calories", "Deep fried foods"], recovery_tips: ["Post workout nutrition within 45m."], supplement_suggestions: ["Whey protein isolate"], habit_tracker: ["Hit targets?"] }
   };
 }
 
 // ─────────────────────────────────────────────
-// DEEPSEEK CALLER — 25s timeout (safe under Supabase edge limits)
+// HIGH-Tier PREMIUM PROMPT BUILDERS
 // ─────────────────────────────────────────────
-async function callDeepSeek(prompt: string, maxTokens: number): Promise<{ content: string | null }> {
-  const key = Deno.env.get("DEEPSEEK_API_KEY");
-  if (!key) return { content: null };
-
-  const ctrl = new AbortController();
-  // FIX: was 115_000 — Supabase edge functions are killed at ~25-60s wall clock,
-  // so the old value never fired and the platform killed the request instead.
-  const timer = setTimeout(() => ctrl.abort(), 25_000);
-
-  try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: "You are an elite Indian Sports Nutritionist. Respond ONLY with valid JSON." },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.30,
-        max_tokens: maxTokens,
-        response_format: { type: "json_object" },
-      }),
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return { content: null };
-    const data = await res.json();
-    return { content: data.choices?.[0]?.message?.content || null };
-  } catch {
-    clearTimeout(timer);
-    return { content: null };
-  }
-}
-
-// ─────────────────────────────────────────────
-// PROMPT BUILDERS
-// ─────────────────────────────────────────────
-function buildDietPrompt(
-  profile: Record<string, unknown>,
-  macros: MacroTargets,
-  timing: TimingConfig,
-  foodType: string,
-  notes: string,
-  days: string[]          // FIX: now accepts a days array so we can split into 2×2-day calls
-): string {
+function buildDietPrompt(profile: Record<string, unknown>, macros: MacroTargets, timing: TimingConfig, foodType: string, notes: string, days: string[]): string {
   const dp = String(profile.dietary_pattern || "vegetarian").toLowerCase();
   let dietRule = "";
-  if (dp === "vegetarian") dietRule = "STRICTLY VEGETARIAN. FATAL ERROR IF YOU USE EGGS, MEAT, OR CHICKEN. Use ONLY Paneer, Soya, Dal, Curd, Whey.";
-  else if (dp === "vegan")  dietRule = "STRICTLY VEGAN. NO DAIRY, NO EGGS. Use Tofu, Soya, Dal.";
-  else if (dp === "eggetarian") dietRule = "EGGETARIAN. Eggs allowed. NO MEAT/CHICKEN. Use Eggs, Paneer, Soya, Dal, Curd.";
-  else                          dietRule = "NON-VEG allowed. Use Chicken, Fish, Eggs, Paneer, Soya.";
+  if (dp === "vegetarian") dietRule = "STRICTLY VEGETARIAN. FATAL EXCEPTION EXCLUSION IF YOU INCLUDE EGGS, MEAT, OR FISH. Use ONLY Paneer, Soya, Dal, Curd, Milk, Whey.";
+  else if (dp === "vegan")  dietRule = "STRICTLY VEGAN. ZERO DAIRY, ZERO EGGS, ZERO MEAT. Use Tofu, Soya Chunks, Almonds, Lentils.";
+  else if (dp === "eggetarian") dietRule = "EGGETARIAN. Eggs are fully permitted. ZERO MEAT, ZERO CHICKEN, ZERO FISH. Use Eggs, Egg Whites, Paneer, Soya, Dairy.";
+  else                          dietRule = "NON-VEGETARIAN permitted. Strategically leverage Chicken Breast, Fish, Eggs along with Paneer and Soya.";
 
   const mealTargets = timing.kcalSplit.map((frac, i) => {
-    const p = Math.round(macros.protein_g * frac);
-    const c = Math.round(macros.carbs_g   * frac);
-    const f = Math.round(macros.fat_g     * frac);
-    const k = Math.round(macros.calories  * frac);
-    return `Meal ${i + 1} (${timing.names[i]}): ${k} kcal | ${p}g Protein | ${c}g Carbs | ${f}g Fat`;
+    return `Meal ${i + 1} (${timing.names[i]}): ${Math.round(macros.calories * frac)} kcal | ${Math.round(macros.protein_g * frac)}g P | ${Math.round(macros.carbs_g * frac)}g C | ${Math.round(macros.fat_g * frac)}g F`;
   }).join("\n");
 
-  return `Generate a ${days.length}-day Indian diet plan (${days.join(", ")}).
-TARGETS: ${macros.calories}kcal, ${macros.protein_g}g Protein, ${macros.carbs_g}g Carbs, ${macros.fat_g}g Fat. Goal: ${sanitizeField(profile.primary_goal)}. Food style: ${foodType}.
-${notes ? `CRITICAL USER FEEDBACK/NOTES: ${notes}` : ""}
+  return `Execute deep clinical evaluation to structure a ${days.length}-day hyper-precise elite Indian diet plan (${days.join(", ")}).
+TARGETS: Exactly ${macros.calories}kcal, ${macros.protein_g}g Protein, ${macros.carbs_g}g Carbs, ${macros.fat_g}g Fat. Goal: ${sanitizeField(profile.primary_goal)}. Food Taxonomy: ${foodType}.
+${notes ? `MANDATORY CLIENT ADAPTATIONS: ${notes}` : ""}
 
-CRITICAL RULES:
-1. DIET: ${dietRule}
-2. SCHEDULE: Exactly ${timing.count} meals per day.
-   STRICT PER-MEAL TARGETS:
+CRITICAL REASONING CONSTRAINTS:
+1. DIETARY BOUNDARY: ${dietRule}
+2. FREQUENCY: Exactly compile ${timing.count} separate meals per day matching these exact split profiles:
    ${mealTargets}
-3. "protein_g", "carbs_g", "fat_g", "kcal" MUST be pure integers (e.g., 15), NOT strings.
-4. "quantity" MUST be exact grams (e.g. "100g", "60g dry"). Never "bowl".
-5. Only generate days: ${days.join(", ")}. Do NOT add extra days.
+3. COMPUTE TRUTHS: Ensure every single ingredient matches a raw entity from common Indian sports science data. Grains must list dry weights (e.g. "60g dry").
+4. ALL NUMERIC FIELDS ("protein_g", "carbs_g", "fat_g", "kcal") MUST BE INTEGER LITERALS, NOT STRINGS.
+5. CULINARY VARIETY: This is a premium plan. DO NOT copy-paste meals across days. You MUST rotate primary protein and carb sources. If ${days[0]} has a Paneer dish, ${days[1] || "the next day"} MUST feature Soya, Tofu, Legumes, or a completely different preparation.
 
-OUTPUT JSON SCHEMA:
+OUTPUT JSON FORMAT ONLY:
 {
   "weekly_rules": { "protein_strategy": "...", "refeed_day": "...", "steps_target": "...", "sleep_protocol": "...", "water_target": "..." },
   "weekly_meals": [
@@ -449,7 +390,7 @@ OUTPUT JSON SCHEMA:
       "meals": [
         {
           "time": "${timing.times[0]}", "name": "${timing.names[0]}",
-          "kcal": 500, "protein_g": 35, "carbs_g": 40, "fat_g": 12, "fiber_g": 5, "prep_time_min": 10,
+          "kcal": 500, "protein_g": 35, "carbs_g": 40, "fat_g": 12, "fiber_g": 5, "prep_time_min": 15,
           "foods": [{ "name": "Paneer", "quantity": "100g", "protein_g": 18, "carbs_g": 3, "fat_g": 14, "fiber_g": 0, "kcal": 210 }],
           "tip": "..."
         }
@@ -459,29 +400,64 @@ OUTPUT JSON SCHEMA:
 }`;
 }
 
-function buildWorkoutPrompt(): string {
-  return `Generate a 5-day/week workout plan + lifestyle rules. Return JSON ONLY with keys "workout_plan" and "lifestyle_rules".`;
+function buildWorkoutPrompt(profile: Record<string, unknown>, macros: MacroTargets): string {
+  const goal = sanitizeField(profile.primary_goal);
+  const stress = parseInt(String(profile.stress_level || "5"));
+  const sleep = parseFloat(String(profile.sleep_hours || "7.5"));
+  
+  return `Act as a world-class Tier-1 Strength Coach and Bio-Architectural Adaptation Expert. Construct a highly personalized, elite 5-day training program and neurological recovery schema.
+CLIENT PROFILE: Goal: ${goal} | Calculated Intake: ${macros.calories} kcal | Sleep Status: ${sleep} hours | Neurological Stress Baseline: ${stress}/10.
+
+INSTRUCTIONS:
+1. CUSTOM SPLIT EVOLUTION: Build a periodized routine optimal for ${goal}. For fat_loss/recomp, emphasize compound load density to safeguard lean mass. For muscle_gain, optimize hyper-trophy volume splits.
+2. STRESS INTERCEPTION: Adjust overall system volume based on stress level (${stress}/10). If stress is high (>=7), include advanced nervous system recovery protocols.
+3. OUTPUT FORMAT: Respond ONLY with a clean JSON object containing keys "workout_plan" and "lifestyle_rules".
+
+SCHEMA BLUEPRINT:
+{
+  "workout_plan": {
+    "frequency": "5 sessions per week",
+    "philosophy": "Detailed physiological rationale engineered for this client...",
+    "weekly_schedule_summary": ["Day 1: ...", "Day 2: ..."],
+    "rest_day_activity": "Active recovery protocol...",
+    "progressive_overload_note": "Specific metrics to track for linear or block progression...",
+    "sessions": [
+      {
+        "day": "Monday", "type": "Strength", "focus": "Push (Chest/Shoulders/Triceps)", "duration_min": 50,
+        "warm_up": ["Specific mobility drill 1", "Specific dynamic activation 2"],
+        "exercises": [
+          { "name": "Incline Dumbbell Press", "sets": 4, "reps": "8-10", "rest_sec: 90, "tip": "Control eccentrics; drive straight up." }
+        ],
+        "cool_down": ["Targeted fascial stretch"]
+      }
+    ]
+  },
+  "lifestyle_rules": {
+    "sleep_hours": "Exact target based on data...",
+    "water_liters": "3.5 Liters daily minimum...",
+    "daily_steps": "8,000-10,000 steps...",
+    "stress_management": ["Actionable bio-feedback habit 1", "Actionable behavior 2"],
+    "avoid_list": ["Specific inflammatory substances or behaviors..."],
+    "recovery_tips": ["Post-workout amino/protein window timing...", "CNS down-regulation method..."],
+    "supplement_suggestions": ["Whey Protein Isolate - 1 scoop post-training", "Creatine Monohydrate - 3g daily"],
+    "habit_tracker": ["Metric 1", "Metric 2"]
+  }
+}`;
 }
 
 // ─────────────────────────────────────────────
-// MAIN HANDLER
+// MAIN ENGINE HANDLER
 // ─────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const body = await req.json().catch(() => ({}));
-
-    // Auth
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) throw new Error("Unauthorized");
+    
     const tokenHash = await hashTokenDeno(authHeader.replace("Bearer ", "").trim());
-    const { data: session } = await supabaseAdmin
-      .from("sessions")
-      .select("user_id")
-      .eq("token_hash", tokenHash)
-      .gt("expires_at", new Date().toISOString())
-      .maybeSingle();
+    const { data: session } = await supabaseAdmin.from("sessions").select("user_id").eq("token_hash", tokenHash).gt("expires_at", new Date().toISOString()).maybeSingle();
     if (!session) throw new Error("Invalid session");
 
     const userId = session.user_id;
@@ -494,51 +470,50 @@ serve(async (req) => {
     const foodType   = String(body.food_type || profile.food_type || "indian");
     const notes      = String(body.notes || "").slice(0, 500);
 
-    // FIX: Split 6000-token diet call into two 3000-token calls (Mon-Tue + Wed-Thu).
-    // Run all three in parallel — each stays well under the 25s abort and platform limits.
+    const apiKey = Deno.env.get("DEEPSEEK_API_KEY");
+    if (!apiKey) {
+      console.error(`[${userId}] DEEPSEEK_API_KEY missing! Forcing local fallback.`);
+    }
+
+    const systemPrompt = "You are a world-class Master Sports Dietitian and Elite Tier-1 Strength Coach specializing in bio-architectural transformation for Indian athletes. Analyze all variables step-by-step to produce hyper-optimized, mathematically flawless elite protocols. Return ONLY a single, valid, perfectly formatted JSON object matching the requested schema exactly, with zero conversational prose.";
+
+    // 🟢 FIX 3: Make the AI generate 7 full days directly in two chunks (4 days + 3 days)
     const [diet1Result, diet2Result, workoutResult] = await Promise.allSettled([
-      callDeepSeek(buildDietPrompt(profile, macros, timing, foodType, notes, ["Monday", "Tuesday"]),     3000),
-      callDeepSeek(buildDietPrompt(profile, macros, timing, foodType, notes, ["Wednesday", "Thursday"]), 3000),
-      callDeepSeek(buildWorkoutPrompt(), 3000),
+      apiKey ? fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: buildDietPrompt(profile, macros, timing, foodType, notes, ["Monday", "Tuesday", "Wednesday", "Thursday"]) }], temperature: 0.65, max_tokens: 4000, response_format: { type: "json_object" } }),
+        signal: AbortSignal.timeout(55_000)
+      }).then(res => res.json()).then(d => d.choices?.[0]?.message?.content || null) : Promise.resolve(null),
+      
+      apiKey ? fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: buildDietPrompt(profile, macros, timing, foodType, notes, ["Friday", "Saturday", "Sunday"]) }], temperature: 0.65, max_tokens: 3000, response_format: { type: "json_object" } }),
+        signal: AbortSignal.timeout(55_000)
+      }).then(res => res.json()).then(d => d.choices?.[0]?.message?.content || null) : Promise.resolve(null),
+
+      apiKey ? fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: buildWorkoutPrompt(profile, macros) }], temperature: 0.30, max_tokens: 3000, response_format: { type: "json_object" } }),
+        signal: AbortSignal.timeout(55_000)
+      }).then(res => res.json()).then(d => d.choices?.[0]?.message?.content || null) : Promise.resolve(null)
     ]);
 
-    // Merge diet chunks — fall back to static plan if both fail
-    const d1 = diet1Result.status === "fulfilled" ? safeParseJSON(diet1Result.value.content ?? "") : null;
-    const d2 = diet2Result.status === "fulfilled" ? safeParseJSON(diet2Result.value.content ?? "") : null;
+    const d1 = diet1Result.status === "fulfilled" ? safeParseJSON(diet1Result.value ?? "") : null;
+    const d2 = diet2Result.status === "fulfilled" ? safeParseJSON(diet2Result.value ?? "") : null;
 
     let dietRaw: any;
-
     if (d1?.weekly_meals && d2?.weekly_meals) {
-      // Both succeeded — merge weekly_meals arrays, take weekly_rules from d1
-      dietRaw = {
-        ...d1,
-        weekly_meals: [...ensureArray(d1.weekly_meals), ...ensureArray(d2.weekly_meals)],
-      };
-    } else if (d1?.weekly_meals) {
-      // Only first chunk succeeded — expandToSevenDays will pad the rest
-      console.warn(`[${userId}] Diet chunk 2 failed. Continuing with chunk 1 only.`);
-      dietRaw = d1;
-    } else if (d2?.weekly_meals) {
-      // Only second chunk succeeded
-      console.warn(`[${userId}] Diet chunk 1 failed. Continuing with chunk 2 only.`);
-      dietRaw = d2;
+      dietRaw = { ...d1, weekly_meals: [...ensureArray(d1.weekly_meals), ...ensureArray(d2.weekly_meals)] };
     } else {
-      // FIX: Both AI calls failed — inject static fallback instead of throwing.
-      // Original code threw here, discarding the already-completed workout result.
-      console.warn(`[${userId}] Both diet chunks failed. Using static fallback diet.`);
+      console.warn(`[${userId}] One or both diet chunks failed. Injecting hyper-varied mathematical fallback.`);
       dietRaw = getFallbackDietPlan(macros, timing, profile);
     }
 
-    // Expand to 7 days and auto-scale macros
-    dietRaw = expandToSevenDays(dietRaw, macros);
+    // Because the AI (or fallback) now outputs 7 distinct days natively, we no longer need expandToSevenDays!
     dietRaw = validateAndScaleMacros(dietRaw, macros);
 
-    // Workout validation — fall back to detailed static plan if AI returned empty/invalid
-    let workoutData = workoutResult.status === "fulfilled" && workoutResult.value.content
-      ? safeParseJSON(workoutResult.value.content)
-      : null;
-
-    const hasValidSessions = Array.isArray(workoutData?.workout_plan?.sessions) && workoutData.workout_plan.sessions.length >= 3;
+    let workoutData = workoutResult.status === "fulfilled" ? safeParseJSON(workoutResult.value ?? "") : null;
+    const hasValidSessions = Array.isArray(workoutData?.workout_plan?.sessions) && workoutData.workout_plan.sessions.length >= 2;
     const hasValidRules    = Array.isArray(workoutData?.lifestyle_rules?.avoid_list) && workoutData.lifestyle_rules.avoid_list.length > 0;
 
     if (!workoutData || !workoutData.workout_plan || !hasValidSessions || !hasValidRules) {
@@ -546,41 +521,16 @@ serve(async (req) => {
       workoutData = getFallbackWorkout();
     }
 
-    const fullPlan = {
-      ...dietRaw,
-      workout_plan:    workoutData.workout_plan,
-      lifestyle_rules: workoutData.lifestyle_rules || dietRaw.weekly_rules,
-      daily_macros:    macros,
-    };
+    const { count } = await supabaseAdmin.from("meal_plans").select("*", { count: "exact", head: true }).eq("user_id", userId);
+    const generatedWeekNumber = (count || 0) + 1;
 
-    // Upsert plan to DB
-    const { count } = await supabaseAdmin
-      .from("meal_plans")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId);
+    const fullPlan = { ...dietRaw, plan_week: generatedWeekNumber, workout_plan: workoutData.workout_plan, lifestyle_rules: workoutData.lifestyle_rules || dietRaw.weekly_rules, daily_macros: macros };
 
-    await supabaseAdmin.from("meal_plans").upsert(
-      {
-        user_id:       userId,
-        plan_week:     (count || 0) + 1,
-        plan_json:     fullPlan,
-        food_type:     foodType,
-        meal_count:    timing.count,
-        generated_at:  new Date().toISOString(),
-      },
-      { onConflict: "user_id,plan_week" }
-    );
-
+    await supabaseAdmin.from("meal_plans").upsert({ user_id: userId, plan_week: generatedWeekNumber, plan_json: fullPlan, food_type: foodType, meal_count: timing.count, generated_at: new Date().toISOString() }, { onConflict: "user_id,plan_week" });
     await supabaseAdmin.from("users").update({ onboarding_completed: true }).eq("id", userId);
 
-    return new Response(
-      JSON.stringify({ success: true, plan: fullPlan }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ success: true, plan: fullPlan }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error: any) {
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

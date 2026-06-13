@@ -94,7 +94,7 @@ export default function SubscriptionsPage() {
           </div>
 
           {error && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl text-center">{error}</div>}
-          {success && <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-xl text-center font-bold">🎉 Payment Successful! Week {nextWeek} Unlocked.</div>}
+          {success && <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-xl text-center font-bold">🎉 Payment Successful! Week {nextWeek-1} Unlocked.</div>}
 
           <button onClick={buyWeek} disabled={buying || success} className="w-full py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-xl hover:bg-yellow-400 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)] disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2">
             {buying ? <span className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></span> : success ? 'Redirecting...' : `Pay Securely to Unlock`}

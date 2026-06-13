@@ -141,7 +141,7 @@ This section contains the contents of the repository's files.
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
-import { hashToken } from '@/lib/otp'
+import { hashToken, sendAccountDeletionEmail } from '@/lib/otp'
 
 export async function POST(req: Request) {
   try {
@@ -199,6 +199,15 @@ export async function POST(req: Request) {
       console.error('Account deletion failed:', deleteError)
       return NextResponse.json({ error: 'Failed to delete account.' }, { status: 500 })
     }
+
+    // ─────────────────────────────────────────────
+    // NEW: Fire off the account deletion confirmation email
+    // ─────────────────────────────────────────────
+    // We use .catch() here so that if the email fails to send for some reason, 
+    // it doesn't crash the API response and the user still gets logged out properly.
+    await sendAccountDeletionEmail(user.email).catch(err => {
+      console.error('Non-fatal error: Failed to send deletion email', err)
+    });
 
     cookieStore.delete('auth-token')
     return NextResponse.json({ message: 'Account deleted successfully.' })
@@ -1267,7 +1276,7 @@ export default function LoginPage() {
       const data = await res.json()
       if (res.ok) {
         setOtpSent(true)
-        setMessage('Check your email for the verification code')
+        setMessage('✅ Code sent! Check your email inbox.')
       } else {
         setMessage(data.error || 'Failed to send OTP')
       }
@@ -1293,15 +1302,17 @@ export default function LoginPage() {
 
       const data = await res.json()
       if (res.ok) {
-        // Redirect based on onboarding status
-        router.push(data.user?.onboardingCompleted ? '/dashboard' : '/onboarding')
+        setMessage('✅ Verification successful! Securing session...')
+        // Add a slight delay so the user can read the success message
+        setTimeout(() => {
+          router.push(data.user?.onboardingCompleted ? '/dashboard' : '/onboarding')
+        }, 1200)
       } else {
-        setMessage(data.error || 'Verification failed')
+        setMessage(data.error || 'Verification failed. Incorrect code.')
+        setVerifying(false)
       }
     } catch (error) {
       setMessage('Network error. Please try again.')
-      console.error(error)
-    } finally {
       setVerifying(false)
     }
   }
@@ -1316,9 +1327,9 @@ export default function LoginPage() {
       })
 
       if (res.ok) {
-        setMessage('Code resent! Check your email.')
+        setMessage('✅ Code resent! Check your email.')
       } else {
-        setMessage('Failed to resend code')
+        setMessage('Failed to resend code. Try again later.')
       }
     } catch (error) {
       setMessage('Network error')
@@ -1327,89 +1338,110 @@ export default function LoginPage() {
     }
   }
 
+  // Helper to determine if the message is a success or error message
+  const isSuccessMessage = message.includes('✅')
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0c0c10] text-white p-4">
-      {!otpSent ? (
-        <form onSubmit={handleSendOtp} className="w-full max-w-sm space-y-6">
-          <h1 className="text-3xl font-extrabold text-center">
-            Aapka<span className="text-yellow-500">Coach</span>
-          </h1>
-          <p className="text-center text-gray-400 text-sm">
-            Enter your email to sign in or create an account.
-          </p>
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            className="w-full p-3 bg-[#17171f] border border-[#222230] rounded-lg text-white placeholder-gray-500"
-            required
-            disabled={sending}
-          />
-          {message && (
-            <p className={`text-sm ${message.includes('success') ? 'text-green-400' : 'text-red-400'}`}>
-              {message}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={sending}
-            className="w-full py-3 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition"
-          >
-            {sending ? 'Sending...' : 'Send Code'}
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleVerifyOtp} className="w-full max-w-sm space-y-6">
-          <h1 className="text-3xl font-extrabold text-center">Check your inbox</h1>
-          <p className="text-center text-gray-400 text-sm">
-            We sent a 6‑digit code to <span className="text-yellow-500">{email}</span>
-          </p>
-          <input
-            type="text"
-            placeholder="000000"
-            value={token}
-            onChange={e => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            className="w-full p-3 bg-[#17171f] border border-[#222230] rounded-lg text-white text-center text-2xl tracking-widest"
-            maxLength={6}
-            required
-            disabled={verifying}
-            autoFocus
-          />
-          {message && (
-            <p className={`text-sm ${message.includes('success') ? 'text-green-400' : 'text-red-400'}`}>
-              {message}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={verifying}
-            className="w-full py-3 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition"
-          >
-            {verifying ? 'Verifying...' : 'Verify Code'}
-          </button>
-          <button
-            type="button"
-            onClick={handleResend}
-            disabled={sending}
-            className="w-full py-2 text-yellow-500 hover:text-yellow-400 text-sm font-medium"
-          >
-            {sending ? 'Resending...' : "Didn't receive code? Resend"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOtpSent(false)
-              setEmail('')
-              setToken('')
-              setMessage('')
-            }}
-            className="w-full py-2 text-gray-400 hover:text-gray-300 text-sm"
-          >
-            Back to email entry
-          </button>
-        </form>
-      )}
+    <div className="min-h-screen flex items-center justify-center bg-[#0c0c10] text-white p-4 relative overflow-hidden">
+      
+      {/* Background ambient glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-yellow-500/5 rounded-full blur-[120px] pointer-events-none"></div>
+
+      <div className="w-full max-w-sm relative z-10">
+        {!otpSent ? (
+          <form onSubmit={handleSendOtp} className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="text-center mb-8">
+              <h1 className="text-4xl font-extrabold tracking-tight mb-2">
+                Aapka<span className="text-yellow-500">Coach</span>
+              </h1>
+              <p className="text-gray-400 text-sm">
+                Enter your email to sign in or create an account.
+              </p>
+            </div>
+            
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full p-4 bg-[#17171f] border border-[#222230] rounded-xl text-white placeholder-gray-500 focus:border-yellow-500 focus:ring-4 focus:ring-yellow-500/10 outline-none transition-all"
+              required
+              disabled={sending}
+            />
+            
+            {message && (
+              <div className={`p-3 rounded-xl text-sm font-medium text-center animate-in zoom-in-95 duration-200 ${isSuccessMessage ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+                {message}
+              </div>
+            )}
+            
+            <button
+              type="submit"
+              disabled={sending}
+              className="w-full py-4 bg-yellow-500 text-black font-bold text-lg rounded-xl hover:bg-yellow-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+            >
+              {sending ? 'Sending Secure Code...' : 'Continue'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleVerifyOtp} className="space-y-6 animate-in slide-in-from-right-8 duration-500">
+            <div className="text-center mb-8">
+              <h1 className="text-3xl font-extrabold mb-2">Check your inbox</h1>
+              <p className="text-gray-400 text-sm">
+                We sent a 6‑digit code to <span className="text-yellow-500 font-medium">{email}</span>
+              </p>
+            </div>
+            
+            <input
+              type="text"
+              placeholder="000000"
+              value={token}
+              onChange={e => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              className="w-full p-4 bg-[#17171f] border border-[#222230] rounded-xl text-white text-center text-3xl tracking-[0.5em] font-mono focus:border-yellow-500 focus:ring-4 focus:ring-yellow-500/10 outline-none transition-all"
+              maxLength={6}
+              required
+              disabled={verifying}
+              autoFocus
+            />
+            
+            {message && (
+              <div className={`p-3 rounded-xl text-sm font-medium text-center animate-in zoom-in-95 duration-200 ${isSuccessMessage ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+                {message}
+              </div>
+            )}
+            
+            <button
+              type="submit"
+              disabled={verifying || token.length < 6}
+              className="w-full py-4 bg-yellow-500 text-black font-bold text-lg rounded-xl hover:bg-yellow-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+            >
+              {verifying ? 'Verifying...' : 'Verify Code'}
+            </button>
+            
+            <div className="flex flex-col gap-2 pt-4">
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={sending}
+                className="w-full py-2 text-yellow-500 hover:text-yellow-400 text-sm font-medium transition-colors"
+              >
+                {sending ? 'Resending...' : "Didn't receive code? Resend"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOtpSent(false)
+                  setToken('')
+                  setMessage('')
+                }}
+                className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors"
+              >
+                Use a different email
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   )
 }
@@ -1499,6 +1531,58 @@ export async function sendOTPEmail(email: string, otp: string): Promise<boolean>
     return true
   } catch (error) {
     console.error('Error sending OTP email:', error)
+    return false
+  }
+}
+
+// ─────────────────────────────────────────────
+// NEW: Send Account Deletion Confirmation Email
+// ─────────────────────────────────────────────
+export async function sendAccountDeletionEmail(email: string): Promise<boolean> {
+  try {
+    const transporter = getEmailTransporter()
+    
+    // Format date in Indian Standard Time
+    const deleteDate = new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'full',
+      timeStyle: 'long'
+    })
+
+    const mailOptions = {
+      from: process.env.GMAIL_USER,
+      to: email,
+      subject: 'Farewell from AapkaCoach - Account Deleted',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #0c0c10;">Account Deletion Confirmation</h2>
+          <p>Hello,</p>
+          <p>This email is to confirm that your AapkaCoach account associated with <strong>${email}</strong> has been successfully and permanently deleted.</p>
+          
+          <div style="background: #17171f; padding: 20px; border-radius: 8px; margin: 20px 0; color: #fff;">
+            <p style="margin: 0 0 10px 0;"><strong style="color: #fbbf24;">Action:</strong> Account & Data Deletion</p>
+            <p style="margin: 0;"><strong style="color: #fbbf24;">Timestamp:</strong> ${deleteDate}</p>
+          </div>
+
+          <p><strong>What happens now?</strong></p>
+          <ul style="color: #444;">
+            <li>Your personal body scan data has been wiped.</li>
+            <li>Your AI-generated meal and workout plans have been archived/deleted.</li>
+            <li>Your email has been removed from our active system.</li>
+          </ul>
+
+          <p>We're sorry to see you go! If you ever wish to return and restart your fitness journey, you can always create a new account using this same email.</p>
+          
+          <p style="color: #666; font-size: 14px; margin-top: 30px;">Stay healthy,<br/><strong>Team AapkaCoach</strong></p>
+        </div>
+      `,
+    }
+
+    await transporter.sendMail(mailOptions)
+    console.log(`✓ Deletion confirmation sent to ${email}`)
+    return true
+  } catch (error) {
+    console.error('Error sending deletion email:', error)
     return false
   }
 }
@@ -2684,7 +2768,7 @@ export default function SubscriptionsPage() {
           </div>
 
           {error && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl text-center">{error}</div>}
-          {success && <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-xl text-center font-bold">🎉 Payment Successful! Week {nextWeek} Unlocked.</div>}
+          {success && <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-xl text-center font-bold">🎉 Payment Successful! Week {nextWeek-1} Unlocked.</div>}
 
           <button onClick={buyWeek} disabled={buying || success} className="w-full py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-xl hover:bg-yellow-400 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)] disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2">
             {buying ? <span className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></span> : success ? 'Redirecting...' : `Pay Securely to Unlock`}
@@ -2744,192 +2828,6 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
-}
-</file>
-
-<file path="app/page.tsx">
-import Link from 'next/link'
-
-export default function HomePage() {
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white font-sans selection:bg-yellow-500 selection:text-black">
-      {/* -------- NAVIGATION -------- */}
-      <nav className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
-        <div className="text-2xl font-extrabold tracking-tight">
-          Aapka<span className="text-yellow-500">Coach</span>
-        </div>
-        <Link
-          href="/login"
-          className="bg-yellow-500 text-black px-5 py-2 rounded-full font-semibold text-sm hover:bg-yellow-400 transition shadow-lg shadow-yellow-500/20"
-        >
-          Get Started
-        </Link>
-      </nav>
-
-      {/* -------- HERO -------- */}
-      <section className="px-4 md:px-6 py-16 md:py-24 max-w-3xl mx-auto text-center">
-        <h1 className="text-4xl md:text-6xl font-extrabold leading-tight tracking-tight">
-          Your AI‑Powered<br />
-          <span className="text-yellow-500">Diet & Fitness Coach</span>
-        </h1>
-        <p className="text-gray-400 mt-6 text-lg md:text-xl max-w-xl mx-auto">
-          A personal nutritionist, personal trainer, and progress tracker – all in your pocket.
-          Built for Indian lifestyles, hostel‑friendly, and surprisingly affordable.
-        </p>
-        <div className="mt-8 flex justify-center gap-4">
-          <Link
-            href="/login"
-            className="bg-yellow-500 text-black px-8 py-3 rounded-full font-bold text-lg hover:bg-yellow-400 transition shadow-xl shadow-yellow-500/20"
-          >
-            Start Your Transformation
-          </Link>
-          <Link
-            href="#how-it-works"
-            className="border border-[#222230] px-8 py-3 rounded-full font-semibold text-gray-300 hover:border-yellow-500 transition"
-          >
-            How It Works
-          </Link>
-        </div>
-        <div className="mt-12 flex justify-center gap-8 text-sm text-gray-500">
-          <span>✅ No credit card</span>
-          <span>✅ Under 2 minutes setup</span>
-          <span>✅ Indian foods only</span>
-        </div>
-      </section>
-
-      {/* -------- FEATURES -------- */}
-      <section id="features" className="px-4 md:px-6 py-16 max-w-5xl mx-auto">
-        <h2 className="text-3xl font-bold text-center mb-12">Why AapkaCoach?</h2>
-        <div className="grid md:grid-cols-3 gap-8">
-          {[
-            {
-              icon: '🧠',
-              title: 'AI‑Personalized Plans',
-              desc: 'DeepSeek AI crafts a 7‑day diet based on your body composition, goal, budget, and hostel‑mess constraints. No generic templates.',
-            },
-            {
-              icon: '⏱️',
-              title: 'Frictionless Login',
-              desc: 'Just enter your email and a one‑time code. No passwords. No social sign‑in. Instant access on any device.',
-            },
-            {
-              icon: '📊',
-              title: 'Real Progress Tracking',
-              desc: 'Log your BCA scans and see your body fat, weight, and visceral fat trend over time with beautiful charts.',
-            },
-            {
-              icon: '🥘',
-              title: '100% Indian Food',
-              desc: 'From dal‑chawal to paneer bhurji, every meal is something you can actually find in your mess or cook cheaply.',
-            },
-            {
-              icon: '📱',
-              title: 'Works Like an App',
-              desc: 'Add to your home screen and use it offline. Feels native, built with cutting‑edge web tech.',
-            },
-            {
-              icon: '🔒',
-              title: 'Privacy First',
-              desc: 'Your health data stays encrypted. We never sell or share your information. No ads, ever.',
-            },
-          ].map((feature, idx) => (
-            <div
-              key={idx}
-              className="bg-[#17171f] border border-[#222230] rounded-2xl p-6 hover:border-yellow-500/30 transition-colors"
-            >
-              <div className="text-3xl mb-4">{feature.icon}</div>
-              <h3 className="font-bold text-lg mb-2">{feature.title}</h3>
-              <p className="text-gray-400 text-sm">{feature.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------- HOW IT WORKS -------- */}
-      <section id="how-it-works" className="px-4 md:px-6 py-16 max-w-3xl mx-auto">
-        <h2 className="text-3xl font-bold text-center mb-12">Get Your Plan in 3 Steps</h2>
-        <div className="space-y-10">
-          {[
-            {
-              step: '01',
-              title: 'Answer a few questions',
-              desc: 'Tell us your age, weight, body fat %, activity level, and diet preferences. Takes less than 2 minutes.',
-            },
-            {
-              step: '02',
-              title: 'AI builds your plan',
-              desc: 'Our engine calculates your exact calories and macros, then writes a custom 7‑day menu with Indian foods.',
-            },
-            {
-              step: '03',
-              title: 'Follow & track progress',
-              desc: 'Log your daily meals and weekly BCA scans. Watch your body fat drop and health improve week by week.',
-            },
-          ].map((item, idx) => (
-            <div key={idx} className="flex gap-6 items-start">
-              <div className="text-yellow-500 text-5xl font-extrabold leading-none">{item.step}</div>
-              <div>
-                <h3 className="text-xl font-bold">{item.title}</h3>
-                <p className="text-gray-400 mt-1">{item.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------- SOCIAL PROOF -------- */}
-      <section className="px-4 md:px-6 py-16 max-w-3xl mx-auto text-center">
-        <h2 className="text-3xl font-bold mb-8">Trusted by fitness enthusiasts</h2>
-        <div className="grid md:grid-cols-2 gap-6">
-          {[
-            {
-              quote: 'AapkaCoach made me go from 17% to 13% body fat in 10 weeks while eating hostel food. I never thought it was possible.',
-              name: 'Abhinav Gupta',
-              detail: 'Student, 23 • 74kg • 178cm',
-            },
-            {
-              quote: 'I tried a dozen diet apps. This is the only one that understands Indian meals and doesn’t ask me to eat avocado toast.',
-              name: 'Riya S.',
-              detail: 'Working professional, 28',
-            },
-          ].map((testimonial, idx) => (
-            <div
-              key={idx}
-              className="bg-[#17171f] border border-[#222230] rounded-2xl p-6 text-left"
-            >
-              <p className="text-gray-300 italic">“{testimonial.quote}”</p>
-              <div className="mt-4 font-semibold">{testimonial.name}</div>
-              <div className="text-xs text-gray-500 mt-1">{testimonial.detail}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------- CTA -------- */}
-      <section className="px-4 md:px-6 py-20 text-center">
-        <div className="max-w-xl mx-auto bg-gradient-to-br from-yellow-500/10 to-transparent border border-yellow-500/20 rounded-3xl p-8 md:p-12">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            Ready to transform your body?
-          </h2>
-          <p className="text-gray-400 mb-8">
-            Join hundreds of users who are losing fat, building muscle, and understanding their nutrition — without leaving their hostel.
-          </p>
-          <Link
-            href="/login"
-            className="inline-block bg-yellow-500 text-black px-10 py-4 rounded-full font-bold text-lg hover:bg-yellow-400 transition shadow-xl shadow-yellow-500/20"
-          >
-            Start Free
-          </Link>
-          <p className="text-xs text-gray-500 mt-4">No credit card required. Cancel anytime.</p>
-        </div>
-      </section>
-
-      {/* -------- FOOTER -------- */}
-      <footer className="border-t border-[#222230] px-4 md:px-6 py-8 text-center text-gray-600 text-sm">
-        <p>AapkaCoach © {new Date().getFullYear()} — Built for Indian bodies, by people who understand.</p>
-      </footer>
-    </div>
-  )
 }
 </file>
 
@@ -3047,6 +2945,580 @@ next-env.d.ts
     "**/*.mts"
   ],
   "exclude": ["node_modules", "supabase"]
+}
+</file>
+
+<file path="app/page.tsx">
+'use client'
+
+import Link from 'next/link'
+import { useEffect, useRef, useState } from 'react'
+
+// ── Macro Ring SVG ────────────────────────────────────────────────────────────
+function MacroRing() {
+  const [animated, setAnimated] = useState(false)
+
+  useEffect(() => {
+    const t = setTimeout(() => setAnimated(true), 300)
+    return () => clearTimeout(t)
+  }, [])
+
+  const cx = 160, cy = 160, r = 120
+  const circumference = 2 * Math.PI * r
+
+  const macros = [
+    { label: 'Protein', pct: 0.35, color: '#F5C518', offset: 0 },
+    { label: 'Carbs', pct: 0.42, color: '#ff9500', offset: 0.35 },
+    { label: 'Fat', pct: 0.23, color: '#ffffff', offset: 0.77 },
+  ]
+
+  return (
+    <div className="relative flex items-center justify-center w-[320px] h-[320px] mx-auto">
+      <svg width="320" height="320" viewBox="0 0 320 320" className="absolute inset-0 -rotate-90">
+        {/* track */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#1e1e2e" strokeWidth="18" />
+        {macros.map((m, i) => {
+          const dash = circumference * m.pct
+          const gap = circumference - dash
+          const offsetDash = circumference * m.offset
+          return (
+            <circle
+              key={i}
+              cx={cx} cy={cy} r={r}
+              fill="none"
+              stroke={m.color}
+              strokeWidth="18"
+              strokeLinecap="round"
+              strokeDasharray={animated ? `${dash} ${gap}` : `0 ${circumference}`}
+              strokeDashoffset={-offsetDash}
+              style={{
+                transition: `stroke-dasharray 1.2s cubic-bezier(0.4,0,0.2,1) ${i * 0.18}s`,
+                filter: m.color === '#F5C518' ? 'drop-shadow(0 0 8px #F5C51888)' : 'none',
+              }}
+            />
+          )
+        })}
+      </svg>
+      {/* centre stats */}
+      <div className="relative z-10 text-center">
+        <div className="text-4xl font-extrabold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>1,840</div>
+        <div className="text-xs text-gray-400 mt-1 tracking-widest uppercase">kcal / day</div>
+      </div>
+      {/* legend */}
+      <div className="absolute -right-8 top-1/2 -translate-y-1/2 flex flex-col gap-3">
+        {macros.map((m, i) => (
+          <div key={i} className="flex items-center gap-2 text-xs whitespace-nowrap">
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: m.color }} />
+            <span className="text-gray-400">{m.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Animated counter ──────────────────────────────────────────────────────────
+function Counter({ to, suffix = '', duration = 1400 }: { to: number; suffix?: string; duration?: number }) {
+  const [val, setVal] = useState(0)
+  const ref = useRef<HTMLSpanElement>(null)
+  const started = useRef(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && !started.current) {
+        started.current = true
+        const start = performance.now()
+        const tick = (now: number) => {
+          const p = Math.min((now - start) / duration, 1)
+          setVal(Math.floor(p * p * to))
+          if (p < 1) requestAnimationFrame(tick)
+          else setVal(to)
+        }
+        requestAnimationFrame(tick)
+      }
+    }, { threshold: 0.3 })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [to, duration])
+
+  return <span ref={ref}>{val.toLocaleString()}{suffix}</span>
+}
+
+// ── Fade-in on scroll ─────────────────────────────────────────────────────────
+function FadeIn({ children, delay = 0, className = '' }: { children: React.ReactNode; delay?: number; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.disconnect() }
+    }, { threshold: 0.1 })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateY(0)' : 'translateY(28px)',
+        transition: `opacity 0.7s ease ${delay}ms, transform 0.7s ease ${delay}ms`,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function HomePage() {
+  const [scrolled, setScrolled] = useState(false)
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 20)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  const features = [
+    {
+      icon: '🧬',
+      title: 'Body-composition macros',
+      desc: 'We use your BCA scan — weight, body fat %, LBM — to calculate exact protein, carbs, and fat targets. Not a one-size-fits-all formula.',
+      size: 'large',
+    },
+    {
+      icon: '🥘',
+      title: '100% Indian foods',
+      desc: 'Dal chawal, paneer bhurji, oats upma, curd rice. Every meal is something you can find in your mess or make on a single burner.',
+      size: 'normal',
+    },
+    {
+      icon: '📈',
+      title: 'Weekly progress charts',
+      desc: 'Log BCA scans. See body fat and lean mass trend over time.',
+      size: 'normal',
+    },
+    {
+      icon: '⚡',
+      title: 'Instant OTP login',
+      desc: 'No passwords. No Google. Just your email and a one-time code. You\'re in under 30 seconds.',
+      size: 'normal',
+    },
+    {
+      icon: '🔒',
+      title: 'Private by design',
+      desc: 'No ads. No data selling. Your health data is yours.',
+      size: 'normal',
+    },
+  ]
+
+  const steps = [
+    { title: 'Answer 8 questions', desc: 'Age, weight, body fat, activity, diet type. Under 2 minutes.' },
+    { title: 'AI builds your plan', desc: 'Exact calories, macros, and a 7-day Indian meal plan — generated in seconds.' },
+    { title: 'Track & improve', desc: 'Log weekly scans. Watch your numbers move in the right direction.' },
+  ]
+
+  const testimonials = [
+    {
+      quote: 'Went from 17% to 13% body fat in 10 weeks eating hostel food. I didn\'t think that was even possible.',
+      name: 'Abhinav G.',
+      detail: 'MCA student, IIIT • 74 kg • 178 cm',
+      stat: '−4% body fat',
+    },
+    {
+      quote: 'Every other app told me to eat avocado toast. AapkaCoach gave me a plan around dal and eggs. Actually usable.',
+      name: 'Riya S.',
+      detail: 'Working professional, 28',
+      stat: '−6 kg in 12 weeks',
+    },
+  ]
+
+  return (
+    <>
+      {/* Google Font */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap');
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        :root {
+          --gold: #F5C518;
+          --gold-dim: #F5C51820;
+          --amber: #ff9500;
+          --bg: #0c0c10;
+          --surface: #13131a;
+          --surface2: #1a1a26;
+          --border: #222232;
+          --border-hover: #F5C51840;
+          --text: #ffffff;
+          --muted: #8888a8;
+          --faint: #3a3a5a;
+        }
+        html { scroll-behavior: smooth; }
+
+        .display { font-family: 'Space Grotesk', sans-serif; }
+        .body-font { font-family: 'Inter', sans-serif; }
+
+        /* Nav glass */
+        .nav-glass {
+          backdrop-filter: blur(14px);
+          background: rgba(12,12,16,0.85);
+          border-bottom: 1px solid var(--border);
+        }
+
+        /* Gold glow button */
+        .btn-gold {
+          background: var(--gold);
+          color: #000;
+          font-family: 'Space Grotesk', sans-serif;
+          font-weight: 700;
+          border-radius: 100px;
+          transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+          box-shadow: 0 0 24px rgba(245,197,24,0.25);
+        }
+        .btn-gold:hover {
+          background: #ffd64a;
+          box-shadow: 0 0 40px rgba(245,197,24,0.45);
+          transform: translateY(-1px);
+        }
+
+        .btn-outline {
+          border: 1px solid var(--border);
+          color: var(--muted);
+          border-radius: 100px;
+          font-family: 'Inter', sans-serif;
+          font-weight: 500;
+          transition: border-color 0.2s, color 0.2s;
+          background: transparent;
+        }
+        .btn-outline:hover { border-color: var(--gold); color: #fff; }
+
+        /* Feature card */
+        .feat-card {
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: 20px;
+          transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+        }
+        .feat-card:hover {
+          border-color: var(--border-hover);
+          transform: translateY(-3px);
+          box-shadow: 0 8px 32px rgba(245,197,24,0.06);
+        }
+
+        /* Stat pill */
+        .stat-pill {
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: 100px;
+        }
+
+        /* Glowing grid line */
+        .grid-accent {
+          background: linear-gradient(90deg, transparent, var(--gold), transparent);
+          height: 1px;
+          opacity: 0.2;
+        }
+
+        /* Step connector */
+        .step-line {
+          width: 1px;
+          background: linear-gradient(to bottom, var(--gold), transparent);
+          margin: 0 auto;
+          opacity: 0.3;
+        }
+
+        /* Testimonial card */
+        .testi-card {
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: 20px;
+          transition: border-color 0.2s;
+        }
+        .testi-card:hover { border-color: var(--border-hover); }
+
+        /* Bento grid */
+        .bento { display: grid; gap: 16px; }
+        @media (min-width: 768px) {
+          .bento { grid-template-columns: repeat(3, 1fr); }
+          .bento-large { grid-column: span 2; }
+        }
+
+        /* Ambient glow behind hero */
+        .hero-glow {
+          position: absolute;
+          width: 600px; height: 600px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(245,197,24,0.07) 0%, transparent 70%);
+          pointer-events: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+        }
+      `}</style>
+
+      <div style={{ background: 'var(--bg)', color: 'var(--text)', minHeight: '100vh', fontFamily: "'Inter', sans-serif" }}>
+
+        {/* ── NAV ────────────────────────────────────────────────── */}
+        <nav className="nav-glass" style={{
+          position: 'sticky', top: 0, zIndex: 50,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 24px',
+        }}>
+          <div className="display" style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px' }}>
+            Aapka<span style={{ color: 'var(--gold)' }}>Coach</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <a href="#how-it-works" className="btn-outline" style={{ padding: '8px 18px', fontSize: 13, textDecoration: 'none', display: 'none' }}>How it works</a>
+            <Link href="/login" className="btn-gold" style={{ padding: '9px 22px', fontSize: 13, textDecoration: 'none', display: 'inline-block' }}>
+              Get started →
+            </Link>
+          </div>
+        </nav>
+
+        {/* ── HERO ───────────────────────────────────────────────── */}
+        <section style={{ position: 'relative', overflow: 'hidden', padding: '80px 24px 100px' }}>
+          {/* ambient glows */}
+          <div className="hero-glow" style={{ top: -200, left: -100 }} />
+          <div className="hero-glow" style={{ bottom: -200, right: -100, background: 'radial-gradient(circle, rgba(255,149,0,0.05) 0%, transparent 70%)' }} />
+
+          <div style={{ maxWidth: 1100, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr', gap: 60, alignItems: 'center' }}>
+            {/* copy side */}
+            <div style={{ maxWidth: 640, margin: '0 auto', textAlign: 'center' }}>
+              {/* eyebrow */}
+              <div className="stat-pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 16px', marginBottom: 28, fontSize: 12, color: 'var(--muted)' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', boxShadow: '0 0 6px #22c55e' }} />
+                <span className="display" style={{ fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: 11 }}>Live · Free to start</span>
+              </div>
+
+              <h1 className="display" style={{ fontSize: 'clamp(38px, 7vw, 68px)', fontWeight: 800, lineHeight: 1.08, letterSpacing: '-1.5px', margin: '0 0 24px' }}>
+                The fitness coach<br />
+                <span style={{ color: 'var(--gold)' }}>built for India</span>
+              </h1>
+
+              <p style={{ fontSize: 18, color: 'var(--muted)', lineHeight: 1.7, margin: '0 0 40px', maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+                Exact macros from your BCA scan. A 7-day meal plan using Indian foods.
+                A workout built for your schedule. All personalised — not templated.
+              </p>
+
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Link href="/login" className="btn-gold" style={{ padding: '14px 32px', fontSize: 16, textDecoration: 'none', display: 'inline-block' }}>
+                  Build my plan — free
+                </Link>
+                <a href="#how-it-works" className="btn-outline" style={{ padding: '14px 28px', fontSize: 15, textDecoration: 'none', display: 'inline-block' }}>
+                  See how it works
+                </a>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 28, marginTop: 36, fontSize: 13, color: 'var(--faint)' }}>
+                <span>✓ No credit card</span>
+                <span>✓ 2-minute setup</span>
+                <span>✓ Indian foods only</span>
+              </div>
+            </div>
+
+            {/* ring visual */}
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <div style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 28,
+                padding: '40px 60px 36px',
+                position: 'relative',
+                boxShadow: '0 0 60px rgba(245,197,24,0.04)',
+              }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 24, textAlign: 'center' }} className="display">
+                  Your daily macro target
+                </div>
+                <MacroRing />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 32, textAlign: 'center' }}>
+                  {[['137g', 'Protein', '#F5C518'], ['193g', 'Carbs', '#ff9500'], ['51g', 'Fat', '#ffffff']].map(([val, label, color]) => (
+                    <div key={label} style={{ background: '#0c0c10', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 6px' }}>
+                      <div className="display" style={{ fontSize: 18, fontWeight: 700, color }}>{val}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── STATS BAR ──────────────────────────────────────────── */}
+        <div className="grid-accent" />
+        <section style={{ padding: '40px 24px', background: 'var(--surface)' }}>
+          <div style={{ maxWidth: 900, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 32, textAlign: 'center' }}>
+            {[
+              { val: 2400, suffix: '+', label: 'Plans generated' },
+              { val: 94, suffix: '%', label: 'Hit macro targets' },
+              { val: 10, suffix: ' weeks', label: 'Avg. first result' },
+              { val: 0, suffix: ' ads', label: 'In our product' },
+            ].map((s, i) => (
+              <FadeIn key={i} delay={i * 80}>
+                <div className="display" style={{ fontSize: 36, fontWeight: 800, color: 'var(--gold)', letterSpacing: '-1px' }}>
+                  <Counter to={s.val} suffix={s.suffix} />
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>{s.label}</div>
+              </FadeIn>
+            ))}
+          </div>
+        </section>
+        <div className="grid-accent" />
+
+        {/* ── FEATURES ───────────────────────────────────────────── */}
+        <section id="features" style={{ padding: '100px 24px', maxWidth: 1000, margin: '0 auto' }}>
+          <FadeIn>
+            <div style={{ textAlign: 'center', marginBottom: 60 }}>
+              <div style={{ fontSize: 11, color: 'var(--gold)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 14, fontWeight: 600 }} className="display">Why it works</div>
+              <h2 className="display" style={{ fontSize: 'clamp(28px, 4vw, 42px)', fontWeight: 800, letterSpacing: '-0.5px', margin: 0 }}>
+                Built different. Not just branded different.
+              </h2>
+            </div>
+          </FadeIn>
+
+          <div className="bento">
+            {features.map((f, i) => (
+              <FadeIn key={i} delay={i * 60} className={f.size === 'large' ? 'bento-large' : ''}>
+                <div className="feat-card" style={{ padding: 28, height: '100%' }}>
+                  <div style={{ fontSize: 28, marginBottom: 16 }}>{f.icon}</div>
+                  <h3 className="display" style={{ fontSize: 17, fontWeight: 700, margin: '0 0 10px', color: '#fff' }}>{f.title}</h3>
+                  <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.65, margin: 0 }}>{f.desc}</p>
+                </div>
+              </FadeIn>
+            ))}
+          </div>
+        </section>
+
+        {/* ── HOW IT WORKS ───────────────────────────────────────── */}
+        <section id="how-it-works" style={{ padding: '80px 24px', maxWidth: 560, margin: '0 auto' }}>
+          <FadeIn>
+            <div style={{ textAlign: 'center', marginBottom: 64 }}>
+              <div style={{ fontSize: 11, color: 'var(--gold)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 14, fontWeight: 600 }} className="display">The process</div>
+              <h2 className="display" style={{ fontSize: 'clamp(28px, 4vw, 40px)', fontWeight: 800, letterSpacing: '-0.5px', margin: 0 }}>
+                Your plan in under 3 minutes
+              </h2>
+            </div>
+          </FadeIn>
+
+          <div style={{ position: 'relative' }}>
+            {steps.map((s, i) => (
+              <FadeIn key={i} delay={i * 120}>
+                <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', marginBottom: i < steps.length - 1 ? 0 : 0 }}>
+                  {/* number + connector */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                    <div className="display" style={{
+                      width: 48, height: 48, borderRadius: '50%',
+                      background: i === 0 ? 'var(--gold)' : 'var(--surface2)',
+                      border: i === 0 ? 'none' : '1px solid var(--border)',
+                      color: i === 0 ? '#000' : 'var(--muted)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontWeight: 800, fontSize: 16, flexShrink: 0,
+                    }}>
+                      {i + 1}
+                    </div>
+                    {i < steps.length - 1 && (
+                      <div className="step-line" style={{ height: 64, width: 1 }} />
+                    )}
+                  </div>
+                  <div style={{ paddingBottom: i < steps.length - 1 ? 48 : 0, paddingTop: 10 }}>
+                    <h3 className="display" style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>{s.title}</h3>
+                    <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.65, margin: 0 }}>{s.desc}</p>
+                  </div>
+                </div>
+              </FadeIn>
+            ))}
+          </div>
+        </section>
+
+        {/* ── TESTIMONIALS ───────────────────────────────────────── */}
+        <section style={{ padding: '80px 24px' }}>
+          <FadeIn>
+            <div style={{ textAlign: 'center', marginBottom: 52 }}>
+              <div style={{ fontSize: 11, color: 'var(--gold)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 14, fontWeight: 600 }} className="display">Real results</div>
+              <h2 className="display" style={{ fontSize: 'clamp(28px, 4vw, 40px)', fontWeight: 800, letterSpacing: '-0.5px', margin: 0 }}>
+                What people are saying
+              </h2>
+            </div>
+          </FadeIn>
+          <div style={{ maxWidth: 860, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+            {testimonials.map((t, i) => (
+              <FadeIn key={i} delay={i * 100}>
+                <div className="testi-card" style={{ padding: 28 }}>
+                  {/* result badge */}
+                  <div style={{
+                    display: 'inline-block', background: 'rgba(245,197,24,0.1)',
+                    border: '1px solid rgba(245,197,24,0.25)',
+                    borderRadius: 100, padding: '4px 14px', fontSize: 12,
+                    color: 'var(--gold)', fontWeight: 700, marginBottom: 20,
+                  }} className="display">
+                    {t.stat}
+                  </div>
+                  <p style={{ fontSize: 15, color: '#ccc', lineHeight: 1.7, margin: '0 0 20px', fontStyle: 'italic' }}>
+                    "{t.quote}"
+                  </p>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{t.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{t.detail}</div>
+                </div>
+              </FadeIn>
+            ))}
+          </div>
+        </section>
+
+        {/* ── CTA ────────────────────────────────────────────────── */}
+        <section style={{ padding: '60px 24px 100px' }}>
+          <FadeIn>
+            <div style={{
+              maxWidth: 640, margin: '0 auto', textAlign: 'center',
+              background: 'var(--surface)',
+              border: '1px solid rgba(245,197,24,0.18)',
+              borderRadius: 28, padding: '56px 40px',
+              boxShadow: '0 0 80px rgba(245,197,24,0.06)',
+              position: 'relative', overflow: 'hidden',
+            }}>
+              {/* glow accent */}
+              <div style={{
+                position: 'absolute', top: -60, left: '50%', transform: 'translateX(-50%)',
+                width: 300, height: 160,
+                background: 'radial-gradient(ellipse, rgba(245,197,24,0.15) 0%, transparent 70%)',
+                pointerEvents: 'none',
+              }} />
+              <h2 className="display" style={{ fontSize: 'clamp(26px, 4vw, 38px)', fontWeight: 800, letterSpacing: '-0.5px', margin: '0 0 16px', position: 'relative' }}>
+                Start your body recomposition today
+              </h2>
+              <p style={{ fontSize: 16, color: 'var(--muted)', margin: '0 0 36px', lineHeight: 1.6, position: 'relative' }}>
+                Get a macro-precise plan built around Indian food — no templates, no guesswork.
+              </p>
+              <Link href="/login" className="btn-gold" style={{ padding: '16px 40px', fontSize: 17, textDecoration: 'none', display: 'inline-block', position: 'relative' }}>
+                Build my free plan
+              </Link>
+              <p style={{ fontSize: 12, color: 'var(--faint)', marginTop: 20 }}>No credit card · No passwords · Cancel anytime</p>
+            </div>
+          </FadeIn>
+        </section>
+
+        {/* ── FOOTER ─────────────────────────────────────────────── */}
+        <footer style={{ borderTop: '1px solid var(--border)', padding: '28px 24px', textAlign: 'center', fontSize: 13, color: 'var(--faint)' }}>
+          <div className="display" style={{ fontWeight: 700, marginBottom: 8, color: 'var(--muted)' }}>
+            Aapka<span style={{ color: 'var(--gold)' }}>Coach</span>
+          </div>
+          <p style={{ margin: 0 }}>
+            © {new Date().getFullYear()} AapkaCoach — Built for Indian bodies, by people who understand.
+          </p>
+          <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--faint)' }}>
+            🇮🇳 Made in India by <span style={{ color: 'var(--muted)' }}>Abhinav Gupta</span>
+          </p>
+        </footer>
+
+      </div>
+    </>
+  )
 }
 </file>
 
@@ -4350,7 +4822,7 @@ const FOOD_TYPES = [
 ]
 
 // ─────────────────────────────────────────────
-// STABLE UI COMPONENTS (Moved outside to fix focus bug)
+// STABLE UI COMPONENTS
 // ─────────────────────────────────────────────
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div className="bg-[#121218] border border-[#222230] rounded-3xl p-6 space-y-6 shadow-lg">
@@ -4489,8 +4961,13 @@ export default function ProfileEditPage() {
       }
 
       setSuccess('✅ Profile saved! Return to the Dashboard when you are ready to generate your next week.')
+      // 🟢 AUTO-SCROLL TO TOP ON SUCCESS
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
     } catch (err: any) {
       setError(err?.message || 'Save failed')
+      // 🟢 AUTO-SCROLL TO TOP ON ERROR
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setSaving(false)
     }
@@ -4540,8 +5017,8 @@ export default function ProfileEditPage() {
       <main className="max-w-2xl mx-auto px-4 md:px-6 py-8 space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
         
         {/* Global status messages */}
-        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm font-mono text-center">{error}</div>}
-        {success && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-green-400 text-sm font-mono text-center">{success}</div>}
+        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm font-mono text-center shadow-lg">{error}</div>}
+        {success && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-green-400 text-sm font-mono text-center shadow-lg">{success}</div>}
 
         {/* BASIC INFO */}
         <Section title="👤 Basic Info">
@@ -4776,18 +5253,20 @@ function normalizeMeal(raw: any, index: number) {
 }
 
 // -------------------- Compact UI Components --------------------
-function CompactMealCard({ meal, mealIndex, todayLogs, onToggle }: any) {
+function CompactMealCard({ meal, mealIndex, todayLogs, onToggle, isHistorical }: any) {
   const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
   const eaten = log?.eaten ?? false
 
   return (
-    <div className={`flex items-center justify-between p-4 border rounded-2xl mb-3 transition-all ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
+    <div className={`flex items-center justify-between p-4 border rounded-2xl mb-3 transition-all ${isHistorical ? 'bg-[#17171f] border-[#222230] opacity-80' : eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
       <div className="flex items-center gap-4 w-full">
-        <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>
-          {eaten ? '✓' : ''}
-        </button>
+        {!isHistorical && (
+          <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>
+            {eaten ? '✓' : ''}
+          </button>
+        )}
         <div className="flex-1">
-          <p className={`text-sm font-bold ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</p>
+          <p className={`text-sm font-bold ${!isHistorical && eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</p>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-[10px] bg-[#222230] text-gray-400 px-2 py-0.5 rounded font-mono">{meal.time}</span>
             <span className="text-xs text-gray-500 font-mono"><span className="text-yellow-500 font-bold">{meal.kcal}</span> kcal · {meal.protein_g}g P</span>
@@ -4802,7 +5281,7 @@ function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number;
   const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
   const r = 28; const circ = 2 * Math.PI * r; const offset = circ - (pct / 100) * circ;
   return (
-    <div className="flex items-center gap-4 bg-[#17171f] border border-[#222230] rounded-2xl px-5 py-4">
+    <div className="flex items-center gap-4 bg-[#17171f] border border-[#222230] rounded-2xl px-5 py-4 h-full">
       <div className="relative w-14 h-14">
         <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
           <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
@@ -4867,7 +5346,6 @@ function MacroRings({ plan, todayLogs, todayDayName }: { plan: any; todayLogs: F
   )
 }
 
-// -------------------- FULL SCREEN IMMERSIVE LOADING --------------------
 function GeneratingScreen({ name, week }: { name: string; week: number }) {
   const [stepIdx, setStepIdx] = useState(0)
   const formattedName = name ? name.split(' ')[0] : 'your'
@@ -4920,44 +5398,42 @@ export default function DashboardPage() {
   const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
 
   const [plan, setPlan] = useState<any>(null)
-  const [allPlans, setAllPlans] = useState<any[]>([]) // Used to accurately track Week #
+  const [allPlans, setAllPlans] = useState<any[]>([]) 
+  const [activePlanId, setActivePlanId] = useState<string | null>(null)
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   
-  // Controls the immersive loading screen
   const [generatingWeek, setGeneratingWeek] = useState<number | null>(null)
   const [planFeedback, setPlanFeedback] = useState('')
-  
   const [error, setError] = useState<string | null>(null)
   const [userName, setUserName] = useState('Athlete')
 
   const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
   const [streak, setStreak] = useState(0)
+  
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
-  // Sync state from Database
-  const loadPlan = async () => {
+  const loadDashboard = async () => {
     setLoading(true); setError(null)
     try {
-      const res = await fetch('/api/me')
-      if (!res.ok) { router.push('/login'); return }
-      const { user } = await res.json()
+      const [userRes, plansRes] = await Promise.all([fetch('/api/me'), fetch('/api/meal-plans')])
+      
+      if (!userRes.ok) { router.push('/login'); return }
+      
+      const { user } = await userRes.json()
       setUserName(user?.profile?.name || user?.email || 'Athlete')
       setProfile(user?.profile || null)
 
-      // Fetch the actual current plan JSON
-      const planRes = await fetch('/api/meal-plan')
-      if (planRes.ok) {
-        const data = await planRes.json()
-        setPlan(data.plan || null)
-      } else { setPlan(null) }
-
-      // Fetch all plans to establish perfect week counts
-      const allPlansRes = await fetch('/api/meal-plans')
-      if (allPlansRes.ok) {
-        const data = await allPlansRes.json()
-        setAllPlans(data.plans || [])
+      if (plansRes.ok) {
+        const data = await plansRes.json()
+        const plansList = data.plans || []
+        setAllPlans(plansList)
+        
+        if (plansList.length > 0 && !activePlanId) {
+          setPlan(plansList[0].plan_json)
+          setActivePlanId(plansList[0].id)
+        }
       }
-
     } catch { setError('Failed to load your dashboard data.') }
     finally { setLoading(false) }
   }
@@ -4969,25 +5445,32 @@ export default function DashboardPage() {
     } catch { /* silent */ }
   }, [today])
 
-  useEffect(() => { loadPlan() }, [])
+  useEffect(() => { loadDashboard() }, [])
   useEffect(() => { if (plan) loadFoodLog() }, [plan, loadFoodLog])
 
-  // -------------------- CORE LOGIC --------------------
-  // Calculate exactly which week we are on by counting the Vault records
-  const planWeek = allPlans.length > 0 ? allPlans.length : (plan ? 1 : 0)
-  const paidWeeks = profile?.paid_weeks ?? 1
+  // 🟢 FIX: Ensure isLatestPlan defaults correctly even if activePlanId is null initially
+  const isLatestPlan = allPlans.length === 0 || !activePlanId || activePlanId === allPlans[0].id;
+  const isHistorical = !isLatestPlan;
   
-  // The roadmap shows up to the next locked week
-  const totalVisibleWeeks = Math.max(planWeek, paidWeeks) + 1
+  const totalGeneratedWeeks = allPlans.length
+  const activePlanIndex = allPlans.findIndex(p => p.id === activePlanId)
+  const viewingWeekNum = activePlanIndex !== -1 ? totalGeneratedWeeks - activePlanIndex : totalGeneratedWeeks
+
+  const paidWeeks = profile?.paid_weeks ?? 1
+  const totalVisibleWeeks = Math.max(totalGeneratedWeeks, paidWeeks) + 1
   const weeksArray = Array.from({ length: totalVisibleWeeks }, (_, i) => i + 1)
 
-  // Extract Dates from the Vault for accurate day counting
   const latestPlanRecord = allPlans.length > 0 ? allPlans[0] : null;
   const planStartDate = latestPlanRecord?.generated_at ? new Date(latestPlanRecord.generated_at) : null;
-  const planDayIndex = planStartDate
-    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
-    : 1
-  const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
+  const daysPassedSinceGeneration = planStartDate 
+    ? Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000))
+    : 0;
+  
+  const planDayIndex = Math.min(7, Math.max(1, daysPassedSinceGeneration + 1));
+  const daysLeft = Math.max(0, 7 - daysPassedSinceGeneration);
+  const isPlanCompleted = daysPassedSinceGeneration >= 7; 
+  const isLastDay = planDayIndex === 7 && !isPlanCompleted;
+  const needsToBuyNextWeek = isPlanCompleted && totalGeneratedWeeks >= paidWeeks;
 
   const todayMeals = (() => {
     const days = ensureArray(plan?.weekly_meals)
@@ -4997,8 +5480,15 @@ export default function DashboardPage() {
 
   const eatenCount = todayMeals.filter((_, i) => todayLogs.find(l => l.meal_index === i)?.eaten).length
 
-  // -------------------- ACTIONS --------------------
+  const switchPlan = (planRecord: any) => {
+    setPlan(planRecord.plan_json)
+    setActivePlanId(planRecord.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
+    if (isHistorical || isPlanCompleted) return; 
+    
     setTodayLogs(prev => {
       const existing = prev.find(l => l.meal_index === mealIndex)
       if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
@@ -5017,7 +5507,8 @@ export default function DashboardPage() {
       const res = await fetch('/api/meal-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: planFeedback.trim() }) })
       const data = await res.json().catch(() => null)
       if (res.ok && data?.success) {
-        await loadPlan() // Hard refresh syncs the Vault and removes the generate button!
+        setActivePlanId(null)
+        await loadDashboard()
         setPlanFeedback('')
       } else { setError(data?.error || 'Failed to generate plan') }
     } catch { setError('An error occurred while generating.') } 
@@ -5025,35 +5516,70 @@ export default function DashboardPage() {
   }
 
   const handleLogout = async () => {
+    setIsLoggingOut(true)
     try { await fetch('/api/logout', { method: 'POST' }) } catch {}
-    router.push('/login')
+    setTimeout(() => { router.push('/') }, 1200)
   }
 
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
+  if (loading && !plan) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
 
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white relative pb-20">
       
-      {/* Immersive Loading State */}
       {generatingWeek !== null && <GeneratingScreen name={userName} week={generatingWeek} />}
+      
+      {isLoggingOut && (
+        <div className="fixed inset-0 z-[100] bg-[#0c0c10]/95 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
+          <span className="text-5xl mb-4">🔒</span>
+          <p className="text-xl font-bold text-white tracking-wide">Logging out securely...</p>
+        </div>
+      )}
 
       {/* Header */}
       <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-md z-10">
-        <h1 className="text-xl font-extrabold tracking-tight cursor-pointer">
+        <h1 className="text-xl font-extrabold tracking-tight cursor-pointer" onClick={() => switchPlan(allPlans[0])}>
           Aapka<span className="text-yellow-500">Coach</span>
         </h1>
         <div className="flex items-center gap-2">
           <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">💳 Billing</button>
           <button onClick={() => router.push('/dashboard/progress')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">📊 Progress</button>
           <button onClick={() => router.push('/dashboard/profile')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">👤 Profile</button>
-          <button onClick={handleLogout} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">Logout</button>
+          <button onClick={handleLogout} disabled={isLoggingOut} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors disabled:opacity-50">Logout</button>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-4 md:px-6 pt-6 animate-in fade-in duration-500">
         {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6 text-red-400 text-sm font-mono text-center">{error}</div>}
 
-        {/* TOP OVERVIEW - Compact and Clean */}
+        {isLatestPlan && isLastDay && !needsToBuyNextWeek && paidWeeks <= totalGeneratedWeeks && (
+          <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-[0_0_15px_rgba(234,179,8,0.1)]">
+            <div>
+              <p className="text-yellow-400 font-bold text-sm">⚠️ Last day of Week {totalGeneratedWeeks}</p>
+              <p className="text-gray-400 text-xs mt-1">Tomorrow your plan expires. Unlock the next week to keep your progress moving.</p>
+            </div>
+            <button onClick={() => router.push('/dashboard/subscriptions')} className="bg-yellow-500 text-black px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap">
+              Unlock Week {totalGeneratedWeeks + 1}
+            </button>
+          </div>
+        )}
+
+        {isLatestPlan && !isPlanCompleted && plan && (
+          <div className="mb-6 bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm">
+            <div className="flex justify-between items-end mb-3">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Week {totalGeneratedWeeks} Progress</p>
+                <p className="text-xl font-bold text-white mt-1">Day {planDayIndex} <span className="text-gray-500 text-sm font-normal">of 7</span></p>
+              </div>
+              <div className="text-right">
+                <p className="text-yellow-500 font-bold font-mono text-sm">{daysLeft} {daysLeft === 1 ? 'day' : 'days'} left</p>
+              </div>
+            </div>
+            <div className="w-full bg-[#0c0c10] rounded-full h-2.5 border border-[#222230] overflow-hidden">
+              <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full transition-all duration-1000 ease-out" style={{ width: `${(planDayIndex / 7) * 100}%` }}></div>
+            </div>
+          </div>
+        )}
+
         {!plan ? (
           <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center my-12 shadow-2xl">
             <div className="text-6xl mb-6 drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">🚀</div>
@@ -5071,71 +5597,96 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-                <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
-                <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
-                <button onClick={() => router.push('/dashboard/week')} className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors">
-                  View Full Diet Plan →
-                </button>
-              </div>
-              <div className="flex flex-col gap-4">
-                <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
-              </div>
-            </div>
-
-            {/* MACROS */}
-            <MacroRings plan={plan} todayLogs={todayLogs} todayDayName={todayDayName} />
-
-            {/* TODAY'S COMPACT CHECKLIST */}
-            {todayMeals.length > 0 && (
-              <div className="mb-12">
-                <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-2">
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2"><span>🎯</span> Today's Checklist</h2>
-                  <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
-                </div>
-                {todayMeals.map((meal, i) => (
-                  <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} />
-                ))}
+            {isHistorical && (
+              <div className="mb-6 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center justify-between">
+                <p className="text-yellow-400 text-sm font-semibold">You are viewing an archived plan (Week {viewingWeekNum}).</p>
+                <button onClick={() => switchPlan(allPlans[0])} className="text-xs bg-[#0c0c10] text-gray-300 px-3 py-1.5 rounded-lg border border-[#222230] hover:text-white">Back to Current</button>
               </div>
             )}
 
-            {/* TRANSFORMATION ROADMAP */}
+            {isLatestPlan && needsToBuyNextWeek ? (
+              <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center mb-8 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-yellow-500"></div>
+                <div className="text-6xl mb-4">🏆</div>
+                <h2 className="text-2xl font-bold mb-2 text-white">Week {totalGeneratedWeeks} Completed!</h2>
+                <p className="text-gray-400 text-sm mb-6 leading-relaxed px-2">
+                  You have successfully finished this week's protocol. The AI needs to recalculate your TDEE and adjust your macros for the next phase to prevent plateaus.
+                </p>
+                <button 
+                  onClick={() => router.push('/dashboard/subscriptions')} 
+                  className="w-full sm:w-auto px-10 py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-2xl hover:bg-yellow-400 transition-all shadow-[0_0_20px_rgba(234,179,8,0.3)]"
+                >
+                  Unlock Week {totalGeneratedWeeks + 1}
+                </button>
+                <p className="text-xs text-gray-500 mt-4">You can still review your old plans in the Vault below.</p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+                    <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
+                    <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
+                    <button 
+                      onClick={() => router.push(isHistorical ? `/dashboard/week?planId=${activePlanId}` : '/dashboard/week')} 
+                      className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors"
+                    >
+                      View Full Diet Plan →
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-4">
+                    <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
+                  </div>
+                </div>
+
+                <MacroRings plan={plan} todayLogs={todayLogs} todayDayName={todayDayName} />
+
+                {todayMeals.length > 0 && (
+                  <div className="mb-12">
+                    <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-2">
+                      <h2 className="text-lg font-bold text-white flex items-center gap-2"><span>🎯</span> {isHistorical ? 'Checklist (Archived)' : "Today's Checklist"}</h2>
+                      <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
+                    </div>
+                    {todayMeals.map((meal, i) => (
+                      <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} isHistorical={isHistorical} />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
             <div className="mt-8">
               <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2"><span>🗺️</span> Transformation Journey</h2>
               <div className="space-y-4 relative">
-                {/* Connecting Line */}
                 <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-[#222230] -z-10"></div>
                 
                 {weeksArray.map(w => {
-                  // 1. COMPLETED WEEK
-                  if (w < planWeek) {
+                  const isGenerated = w <= totalGeneratedWeeks
+                  const planForThisWeek = isGenerated ? allPlans[totalGeneratedWeeks - w] : null
+                  const isCurrentlyViewing = planForThisWeek?.id === activePlanId
+
+                  if (isGenerated) {
                     return (
                       <div key={w} className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-green-500/10 text-green-400 flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 border-4 border-[#0c0c10]">✓</div>
-                        <div className="flex-1 flex items-center justify-between p-4 bg-[#17171f] border border-[#222230] rounded-2xl opacity-75 hover:opacity-100 transition-opacity">
-                          <div><p className="font-bold text-white">Week {w}</p><p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-0.5">Completed</p></div>
-                          <button onClick={() => router.push('/dashboard/history')} className="px-4 py-2 bg-[#222230] text-gray-300 text-xs font-bold rounded-lg hover:bg-[#333] transition-colors">View Vault</button>
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold z-10 border-4 border-[#0c0c10] ${isCurrentlyViewing ? 'bg-yellow-500 text-black shadow-[0_0_15px_rgba(234,179,8,0.4)] text-xl' : 'bg-green-500/20 text-green-400 text-lg'}`}>
+                          {isCurrentlyViewing ? '⚡' : '✓'}
                         </div>
+                        <button 
+                          onClick={() => !isCurrentlyViewing && switchPlan(planForThisWeek)}
+                          className={`flex-1 flex items-center justify-between p-5 rounded-2xl transition-all text-left ${isCurrentlyViewing ? 'bg-gradient-to-r from-[#1c1c26] to-[#17171f] border border-yellow-500/50 shadow-lg cursor-default' : 'bg-[#17171f] border border-[#222230] hover:border-gray-500 cursor-pointer'}`}
+                        >
+                          <div>
+                            <p className={`font-bold text-lg ${isCurrentlyViewing ? 'text-white' : 'text-gray-300'}`}>Week {w}</p>
+                            <p className={`text-[10px] font-mono uppercase tracking-widest mt-0.5 ${isCurrentlyViewing ? 'text-yellow-500' : 'text-gray-500'}`}>
+                              {isCurrentlyViewing ? 'Currently Viewing' : 'View Plan'}
+                            </p>
+                          </div>
+                          {!isCurrentlyViewing && <span className="text-xl text-gray-500">→</span>}
+                        </button>
                       </div>
                     )
                   }
 
-                  // 2. ACTIVE WEEK
-                  if (w === planWeek && planWeek > 0) {
-                    return (
-                      <div key={w} className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-yellow-500 text-black flex items-center justify-center font-extrabold text-xl flex-shrink-0 z-10 border-4 border-[#0c0c10] shadow-[0_0_15px_rgba(234,179,8,0.4)]">⚡</div>
-                        <div className="flex-1 flex items-center justify-between p-5 bg-gradient-to-r from-[#1c1c26] to-[#17171f] border border-yellow-500/50 rounded-2xl shadow-lg">
-                          <div><p className="font-bold text-white text-lg">Week {w}</p><p className="text-[10px] text-yellow-500 font-mono uppercase tracking-widest mt-0.5">Current Plan</p></div>
-                          <button onClick={() => router.push('/dashboard/week')} className="px-5 py-2.5 bg-yellow-500 text-black text-xs font-extrabold rounded-lg hover:bg-yellow-400 shadow-md transition-all">View Plan</button>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 3. UNLOCKED (READY TO GENERATE)
-                  if (w > planWeek && w <= paidWeeks) {
+                  if (w > totalGeneratedWeeks && w <= paidWeeks) {
                     return (
                       <div key={w} className="flex gap-4">
                         <div className="w-12 h-12 rounded-full bg-[#17171f] text-gray-400 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 mt-2">🔓</div>
@@ -5151,7 +5702,6 @@ export default function DashboardPage() {
                     )
                   }
 
-                  // 4. LOCKED
                   return (
                     <div key={w} className="flex items-center gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
                       <div className="w-12 h-12 rounded-full bg-[#0c0c10] text-gray-600 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10">🔒</div>
@@ -5198,10 +5748,98 @@ interface TimingConfig { times: string[]; names: string[]; count: number; kcalSp
 function safeNum(val: unknown, fallback = 0): number { const n = Number(val); return isFinite(n) && n > 0 ? n : fallback; }
 function sanitizeField(val: unknown): string { return val == null ? "Not specified" : String(val).replace(/[\r\n`<>]/g, " ").trim().slice(0, 200); }
 function clamp(val: number, min: number, max: number): number { return Math.max(min, Math.min(max, val)); }
+
 async function hashTokenDeno(token: string): Promise<string> {
   const enc = new TextEncoder().encode(token);
   const buf = await crypto.subtle.digest("SHA-256", enc);
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function ensureArray(val: any): any[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return [val];
+}
+
+// ─────────────────────────────────────────────
+// INDIAN FOOD DATABASE (Per 100g/100ml)
+// ─────────────────────────────────────────────
+const FOOD_DB: Record<string, [number, number, number, number]> = {
+  "whey protein isolate":   [80, 4,  1,  0],
+  "whey protein":           [75, 5,  2,  0],
+  "paneer":                 [18, 3,  14, 0],
+  "tofu":                   [16, 3,  8,  1],
+  "eggs":                   [13, 1,  11, 0],
+  "boiled eggs":            [13, 1,  11, 0],
+  "egg whites":             [11, 1,  0,  0],
+  "curd":                   [4,  4,  4,  0],
+  "low fat curd":           [5,  5,  2,  0],
+  "greek yogurt":           [9,  4,  0,  0],
+  "chicken breast":         [31, 0,  4,  0],
+  "soya chunks dry":        [52, 33, 1,  13],
+  "soya chunks cooked":     [17, 11, 0,  4],
+  "fish":                   [22, 0,  5,  0],
+  "oats":                   [13, 66, 7,  10],
+  "brown rice dry":         [7,  76, 3,  4],
+  "brown rice cooked":      [3,  23, 1,  2],
+  "white rice dry":         [7,  80, 1,  1],
+  "white rice cooked":      [3,  28, 0,  0],
+  "roti":                   [9,  45, 3,  6], 
+  "chapati":                [9,  45, 3,  6],
+  "wheat flour":            [12, 73, 2,  12],
+  "bread brown":            [9,  41, 4,  7],
+  "poha":                   [2,  76, 1,  1],
+  "upma":                   [3,  18, 2,  1],
+  "banana":                 [1,  23, 0,  3],
+  "apple":                  [0,  14, 0,  2],
+  "sweet potato":           [2,  20, 0,  3],
+  "potato":                 [2,  17, 0,  2],
+  "masoor dal dry":         [24, 59, 1,  15],
+  "masoor dal cooked":      [9,  20, 0,  8],
+  "moong dal cooked":       [7,  18, 0,  8],
+  "rajma cooked":           [9,  22, 0,  7],
+  "chana dal cooked":       [9,  27, 3,  8],
+  "chickpeas cooked":       [9,  27, 3,  8],
+  "peanut butter":          [25, 20, 50, 6],
+  "almond butter":          [21, 22, 51, 4],
+  "ghee":                   [0,  0,  100,0],
+  "olive oil":              [0,  0,  100,0],
+  "almonds":                [21, 22, 49, 13],
+  "peanuts":                [26, 16, 49, 9],
+  "milk whole":             [3,  5,  4,  0],
+  "milk low fat":           [4,  5,  2,  0],
+  "milk toned":             [3,  5,  3,  0],
+  "mixed vegetables":       [2,  8,  0,  3],
+  "broccoli":               [3,  7,  0,  3],
+  "spinach":                [3,  4,  0,  2],
+  "cucumber":               [1,  4,  0,  1],
+};
+
+function lookupMacros(foodName: string, quantityStr: string): { protein_g: number; carbs_g: number; fat_g: number; fiber_g: number; kcal: number } | null {
+  const key = foodName.toLowerCase().replace(/\(.*?\)/g, "").trim();
+  const entry = FOOD_DB[key] ?? Object.entries(FOOD_DB).find(([k]) => key.includes(k) || k.includes(key))?.[1];
+  if (!entry) return null;
+  
+  const match = quantityStr.match(/([\d.]+)\s*(g|ml|kg|l)?/i);
+  if (!match) return null;
+  
+  const amount = parseFloat(match[1]);
+  const unit   = (match[2] || "g").toLowerCase();
+  
+  let grams = amount;
+  if (unit === "kg") grams = amount * 1000;
+  if (unit === "l")  grams = amount * 1000;
+  
+  const factor = grams / 100;
+  const [p, c, f, fib] = entry;
+  
+  const protein_g = Math.round(p * factor);
+  const carbs_g   = Math.round(c * factor);
+  const fat_g     = Math.round(f * factor);
+  const fiber_g   = Math.round(fib * factor);
+  const kcal      = Math.round(protein_g * 4 + carbs_g * 4 + fat_g * 9);
+  
+  return { protein_g, carbs_g, fat_g, fiber_g, kcal };
 }
 
 // ─────────────────────────────────────────────
@@ -5240,7 +5878,7 @@ function calcMacros(profile: Record<string, unknown>): MacroTargets {
   }
 
   const weeklyWeightChangeKg = (deficitSurplusKcal * 7) / 7700;
-  let proteinG = clamp(Math.round(weightKg * 1.85), 100, 180);
+  const proteinG = clamp(Math.round(weightKg * 1.85), 100, 180);
   const fatG = clamp(Math.round(weightKg * 1.1), 50, 95);
   const carbsG = Math.max(Math.round((targetCalories - proteinG * 4 - fatG * 9) / 4), 60);
   const fiberG = clamp(Math.round(carbsG * 0.14), 25, 40);
@@ -5255,77 +5893,86 @@ function calcMacros(profile: Record<string, unknown>): MacroTargets {
 
 function getMealTimingConfig(pref: string): TimingConfig {
   switch (pref) {
-    case "3_meals": return { times: ["08:00 AM", "01:30 PM", "08:00 PM"], names: ["Breakfast", "Lunch", "Dinner"], count: 3, kcalSplit: [0.30, 0.40, 0.30] };
-    case "if_16_8": return { times: ["12:00 PM", "04:00 PM", "08:00 PM"], names: ["Break-Fast", "Pre-Workout", "Dinner"], count: 3, kcalSplit: [0.35, 0.25, 0.40] };
-    case "if_14_10": return { times: ["10:00 AM", "01:30 PM", "05:00 PM", "08:00 PM"], names: ["Brunch", "Lunch", "Pre-Workout", "Dinner"], count: 4, kcalSplit: [0.25, 0.30, 0.15, 0.30] };
-    case "6_meals": return { times: ["07:30 AM", "10:30 AM", "01:30 PM", "04:30 PM", "07:30 PM", "10:00 PM"], names: ["Early Snack", "Breakfast", "Lunch", "Pre-Workout", "Dinner", "Pre-Sleep"], count: 6, kcalSplit: [0.15, 0.12, 0.25, 0.18, 0.22, 0.08] };
-    default: return { times: ["08:00 AM", "01:00 PM", "05:00 PM", "08:30 PM"], names: ["Breakfast", "Lunch", "Evening Snack", "Dinner"], count: 4, kcalSplit: [0.25, 0.30, 0.15, 0.30] };
+    case "3_meals":   return { times: ["08:00 AM", "01:30 PM", "08:00 PM"], names: ["Breakfast", "Lunch", "Dinner"], count: 3, kcalSplit: [0.30, 0.40, 0.30] };
+    case "if_16_8":   return { times: ["12:00 PM", "04:00 PM", "08:00 PM"], names: ["Break-Fast", "Pre-Workout", "Dinner"], count: 3, kcalSplit: [0.35, 0.25, 0.40] };
+    case "if_14_10":  return { times: ["10:00 AM", "01:30 PM", "05:00 PM", "08:00 PM"], names: ["Brunch", "Lunch", "Pre-Workout", "Dinner"], count: 4, kcalSplit: [0.25, 0.30, 0.15, 0.30] };
+    case "6_meals":   return { times: ["07:30 AM", "10:30 AM", "01:30 PM", "04:30 PM", "07:30 PM", "10:00 PM"], names: ["Early Snack", "Breakfast", "Lunch", "Pre-Workout", "Dinner", "Pre-Sleep"], count: 6, kcalSplit: [0.15, 0.12, 0.25, 0.18, 0.22, 0.08] };
+    default:          return { times: ["08:00 AM", "01:00 PM", "05:00 PM", "08:30 PM"], names: ["Breakfast", "Lunch", "Evening Snack", "Dinner"], count: 4, kcalSplit: [0.25, 0.30, 0.15, 0.30] };
   }
 }
 
-function ensureArray(val: any): any[] {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  return [val];
-}
-
 // ─────────────────────────────────────────────
-// DIET VALIDATOR & AUTO-SCALER (Working Perfectly)
+// DIET VALIDATOR & AUTO-SCALER
 // ─────────────────────────────────────────────
 function validateAndScaleMacros(plan: any, macros: MacroTargets): any {
   const weeklyMeals = ensureArray(plan.weekly_meals);
   if (weeklyMeals.length === 0) return plan;
 
-  const targetP = macros.protein_g; const targetC = macros.carbs_g; const targetF = macros.fat_g;
-
   const fixed = weeklyMeals.map((day: any) => {
     const meals = ensureArray(day.meals);
-    const parsedMeals = meals.map((meal: any) => {
+    const recomputedMeals = meals.map((meal: any) => {
       const foodsRaw = ensureArray(meal.foods || meal.ingredients || meal.items);
-      const normalizedFoods = foodsRaw.map((food: any) => {
-        const p = Math.round(safeNum(food.protein_g ?? food.protein ?? food.Protein));
-        const c = Math.round(safeNum(food.carbs_g ?? food.carbs ?? food.Carbs));
-        const f = Math.round(safeNum(food.fat_g ?? food.fat ?? food.Fat));
-        const fib = Math.round(safeNum(food.fiber_g ?? food.fiber ?? food.Fiber));
-        return { name: String(food.name || "Food"), quantity: String(food.quantity || "1 serving"), protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: (p * 4) + (c * 4) + (f * 9) };
+      const foods = foodsRaw.map((food: any) => {
+        const name     = String(food.name || "Food");
+        const quantity = String(food.quantity || "100g");
+        
+        const fromDB = lookupMacros(name, quantity);
+        if (fromDB) return { name, quantity, ...fromDB };
+
+        const p   = Math.round(safeNum(food.protein_g ?? food.protein));
+        const c   = Math.round(safeNum(food.carbs_g   ?? food.carbs));
+        const f   = Math.round(safeNum(food.fat_g     ?? food.fat));
+        const fib = Math.round(safeNum(food.fiber_g   ?? food.fiber));
+        return { name, quantity, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: p*4 + c*4 + f*9 };
       });
-      return { ...meal, foods: normalizedFoods };
+
+      const mP   = foods.reduce((s: number, f: any) => s + f.protein_g, 0);
+      const mC   = foods.reduce((s: number, f: any) => s + f.carbs_g,   0);
+      const mF   = foods.reduce((s: number, f: any) => s + f.fat_g,     0);
+      const mFib = foods.reduce((s: number, f: any) => s + f.fiber_g,   0);
+      return { ...meal, foods, protein_g: mP, carbs_g: mC, fat_g: mF, fiber_g: mFib, kcal: mP*4 + mC*4 + mF*9 };
     });
 
-    let currP = 0, currC = 0, currF = 0;
-    parsedMeals.forEach((m: any) => m.foods.forEach((f: any) => { currP += f.protein_g; currC += f.carbs_g; currF += f.fat_g; }));
-    if (currP === 0) currP = 1; if (currC === 0) currC = 1; if (currF === 0) currF = 1;
+    const dayP = recomputedMeals.reduce((s: number, m: any) => s + m.protein_g, 0);
+    const dayC = recomputedMeals.reduce((s: number, m: any) => s + m.carbs_g,   0);
+    const dayF = recomputedMeals.reduce((s: number, m: any) => s + m.fat_g,     0);
 
-    const ratioP = targetP / currP; const ratioC = targetC / currC; const ratioF = targetF / currF;
-    let newDayP = 0, newDayC = 0, newDayF = 0;
+    if (dayP === 0 && dayC === 0 && dayF === 0) return { ...day, meals: recomputedMeals };
 
-    const scaledMeals = parsedMeals.map((meal: any) => {
-      let mealP = 0, mealC = 0, mealF = 0, mealFib = 0;
+    const ratioP = macros.protein_g / Math.max(dayP, 1);
+    const ratioC = macros.carbs_g   / Math.max(dayC, 1);
+    const ratioF = macros.fat_g     / Math.max(dayF, 1);
+    
+    const scale = (ratioP + ratioC + ratioF) / 3;
+    const shouldScale = Math.abs(scale - 1) > 0.10;
+
+    const scaledMeals = recomputedMeals.map((meal: any) => {
       const scaledFoods = meal.foods.map((food: any) => {
-        let p = Math.round(food.protein_g * ratioP); let c = Math.round(food.carbs_g * ratioC); let f = Math.round(food.fat_g * ratioF); let fib = Math.round(food.fiber_g * ratioC);
-        let qty = food.quantity;
-        const avgRatio = (ratioP + ratioC + ratioF) / 3;
-        if (Math.abs(avgRatio - 1) > 0.10) { qty = qty.replace(/\b\d+(\.\d+)?\b/g, (match: string) => Math.round(parseFloat(match) * avgRatio).toString()); }
-        mealP += p; mealC += c; mealF += f; mealFib += fib;
-        return { ...food, quantity: qty, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: (p * 4) + (c * 4) + (f * 9) };
+        if (!shouldScale) return food;
+        const newQty = food.quantity.replace(/([\d.]+)/, (match: string) => Math.round(parseFloat(match) * scale).toString());
+        
+        const fromDB = lookupMacros(food.name, newQty);
+        if (fromDB) return { ...food, quantity: newQty, ...fromDB };
+
+        const p   = Math.round(food.protein_g * ratioP);
+        const c   = Math.round(food.carbs_g   * ratioC);
+        const f   = Math.round(food.fat_g     * ratioF);
+        const fib = Math.round(food.fiber_g   * ratioC);
+        return { ...food, quantity: newQty, protein_g: p, carbs_g: c, fat_g: f, fiber_g: fib, kcal: p*4+c*4+f*9 };
       });
-      newDayP += mealP; newDayC += mealC; newDayF += mealF;
-      return { ...meal, foods: scaledFoods, protein_g: mealP, carbs_g: mealC, fat_g: mealF, fiber_g: mealFib, kcal: (mealP * 4) + (mealC * 4) + (mealF * 9) };
+
+      const mP   = scaledFoods.reduce((s: number, f: any) => s + f.protein_g, 0);
+      const mC   = scaledFoods.reduce((s: number, f: any) => s + f.carbs_g,   0);
+      const mF   = scaledFoods.reduce((s: number, f: any) => s + f.fat_g,     0);
+      const mFib = scaledFoods.reduce((s: number, f: any) => s + f.fiber_g,   0);
+      return { ...meal, foods: scaledFoods, protein_g: mP, carbs_g: mC, fat_g: mF, fiber_g: mFib, kcal: mP*4+mC*4+mF*9 };
     });
 
-    const diffP = targetP - newDayP; const diffC = targetC - newDayC; const diffF = targetF - newDayF;
-    if ((diffP !== 0 || diffC !== 0 || diffF !== 0) && scaledMeals.length > 0) {
-      const lastMeal = scaledMeals[scaledMeals.length - 1];
-      if (lastMeal.foods.length > 0) {
-        const lastFood = lastMeal.foods[lastMeal.foods.length - 1];
-        lastFood.protein_g = Math.max(0, lastFood.protein_g + diffP); lastFood.carbs_g = Math.max(0, lastFood.carbs_g + diffC); lastFood.fat_g = Math.max(0, lastFood.fat_g + diffF);
-        lastFood.kcal = (lastFood.protein_g * 4) + (lastFood.carbs_g * 4) + (lastFood.fat_g * 9);
-        lastMeal.protein_g += diffP; lastMeal.carbs_g += diffC; lastMeal.fat_g += diffF;
-        lastMeal.kcal = (lastMeal.protein_g * 4) + (lastMeal.carbs_g * 4) + (lastMeal.fat_g * 9);
-        newDayP += diffP; newDayC += diffC; newDayF += diffF;
-      }
-    }
-    return { ...day, meals: scaledMeals, total_kcal: (newDayP * 4) + (newDayC * 4) + (newDayF * 9), total_protein_g: newDayP, total_carbs_g: newDayC, total_fat_g: newDayF };
+    const newDayP = scaledMeals.reduce((s: number, m: any) => s + m.protein_g, 0);
+    const newDayC = scaledMeals.reduce((s: number, m: any) => s + m.carbs_g,   0);
+    const newDayF = scaledMeals.reduce((s: number, m: any) => s + m.fat_g,     0);
+
+    return { ...day, meals: scaledMeals, total_protein_g: newDayP, total_carbs_g: newDayC, total_fat_g: newDayF, total_kcal: newDayP*4 + newDayC*4 + newDayF*9 };
   });
 
   return { ...plan, weekly_meals: fixed };
@@ -5334,7 +5981,10 @@ function validateAndScaleMacros(plan: any, macros: MacroTargets): any {
 function safeParseJSON(raw: string): any {
   if (!raw) return null;
   try { return JSON.parse(raw); } catch {
-    try { const s = raw.indexOf("{"), e = raw.lastIndexOf("}"); if (s !== -1 && e > s) return JSON.parse(raw.substring(s, e + 1)); } catch {}
+    try {
+      const s = raw.indexOf("{"), e = raw.lastIndexOf("}");
+      if (s !== -1 && e > s) return JSON.parse(raw.substring(s, e + 1));
+    } catch {}
   }
   return null;
 }
@@ -5346,158 +5996,122 @@ function expandToSevenDays(plan: any, macros: MacroTargets): any {
 
   const d1 = base[0]; const d2 = base[1 % base.length]; const d4 = base[3 % base.length];
   const extras = [
-    { ...d4, day: "Friday", day_name: "Friday", type: "standard", daily_note: "HIIT day — maintain intensity.", hydration_reminder: "500ml water pre-workout." },
-    { ...d2, day: "Saturday", day_name: "Saturday", type: "refeed", total_kcal: macros.calories + 200, daily_note: `Refeed day — ${macros.calories + 200} kcal to prevent metabolic adaptation.`, hydration_reminder: "Extra carbs require extra water." },
-    { ...d1, day: "Sunday", day_name: "Sunday", type: "rest", daily_note: "Rest day — muscles grow outside the gym.", hydration_reminder: "Hydrate and prep meals for tomorrow." }
+    { ...d4, day: "Friday",   day_name: "Friday",   type: "standard", daily_note: "HIIT day — maintain intensity.",                              hydration_reminder: "500ml water pre-workout." },
+    { ...d2, day: "Saturday", day_name: "Saturday",  type: "refeed",   total_kcal: macros.calories + 200, daily_note: `Refeed day — ${macros.calories + 200} kcal to prevent metabolic adaptation.`, hydration_reminder: "Extra carbs require extra water." },
+    { ...d1, day: "Sunday",   day_name: "Sunday",    type: "rest",     daily_note: "Rest day — muscles grow outside the gym.",                   hydration_reminder: "Hydrate and prep meals for tomorrow." },
   ];
   return { ...plan, weekly_meals: [...base, ...extras] };
 }
 
 // ─────────────────────────────────────────────
-// DETAILED FALLBACK WORKOUT (Fires if AI times out or empties)
+// ENHANCED FALLBACK DIET PLAN (Guarantees Variety)
 // ─────────────────────────────────────────────
-function getFallbackWorkout() {
-  return {
-    workout_plan: {
-      frequency: "5 sessions per week",
-      philosophy: "Push-Pull-Legs maximizes stimulus. Compound lifts drive the hormonal environment for recomposition. HIIT offsets any weekend caloric surplus.",
-      weekly_schedule_summary: ["Mon: Push (Chest, Shoulders, Triceps)", "Tue: Pull (Back, Biceps)", "Wed: Rest / Walk", "Thu: Legs (Quads, Hamstrings, Glutes)", "Fri: HIIT + Core", "Sat: Full Body Strength", "Sun: Rest / Mobility"],
-      rest_day_activity: "8,000-step brisk walk. Keeps NEAT high without causing muscle damage.",
-      progressive_overload_note: "Add 2.5kg to compound lifts every 1-2 weeks. Track your reps closely.",
-      sessions: [
-        {
-          day: "Monday", type: "Strength", focus: "Push", duration_min: 50,
-          warm_up: ["Arm circles × 20", "Band pull-aparts × 15"],
-          exercises: [
-            { name: "Dumbbell Bench Press", sets: 4, reps: "8-10", rest_sec: 90, tip: "Retract scapula before pressing." },
-            { name: "Overhead Press", sets: 3, reps: "10-12", rest_sec: 75, tip: "Tuck ribs — don't flare." },
-            { name: "Incline Dumbbell Fly", sets: 3, reps: "12-15", rest_sec: 60, tip: "Slight elbow bend throughout." },
-            { name: "Tricep Pushdown", sets: 3, reps: "12-15", rest_sec: 60, tip: "Fully extend elbow at bottom." }
-          ],
-          cool_down: ["Chest stretch 30s"]
-        },
-        {
-          day: "Tuesday", type: "Strength", focus: "Pull", duration_min: 50,
-          warm_up: ["Dead hangs 30s", "Cat-camel × 10"],
-          exercises: [
-            { name: "Lat Pulldown / Pull-Ups", sets: 4, reps: "8-10", rest_sec: 90, tip: "Depress shoulder blades first." },
-            { name: "Dumbbell Rows", sets: 3, reps: "10-12", rest_sec: 75, tip: "Drive elbow past torso." },
-            { name: "Face Pulls", sets: 3, reps: "15-20", rest_sec: 45, tip: "Pull to nose level." },
-            { name: "Bicep Curls", sets: 3, reps: "10-12", rest_sec: 60, tip: "Supinate wrist at top." }
-          ],
-          cool_down: ["Lat stretch 30s"]
-        },
-        {
-          day: "Thursday", type: "Strength", focus: "Legs", duration_min: 55,
-          warm_up: ["Bodyweight squats × 20", "Glute bridges × 15"],
-          exercises: [
-            { name: "Goblet Squat / Back Squat", sets: 4, reps: "8-10", rest_sec: 120, tip: "Knees track over toes." },
-            { name: "Romanian Deadlift", sets: 3, reps: "10-12", rest_sec: 90, tip: "Push hips back, not down." },
-            { name: "Walking Lunges", sets: 3, reps: "12 each leg", rest_sec: 60, tip: "Upright torso reduces knee stress." },
-            { name: "Calf Raises", sets: 4, reps: "15-20", rest_sec: 45, tip: "Full stretch at bottom." }
-          ],
-          cool_down: ["Quad stretch 30s"]
-        },
-        {
-          day: "Friday", type: "Cardio", focus: "HIIT + Core", duration_min: 35,
-          warm_up: ["Jumping jacks 1 min"],
-          exercises: [
-            { name: "Burpees", sets: 5, reps: "30s work / 20s rest", rest_sec: 20, tip: "Land softly." },
-            { name: "Mountain Climbers", sets: 4, reps: "40 total", rest_sec: 20, tip: "Hips level — don't pike." },
-            { name: "Plank Hold", sets: 3, reps: "60 seconds", rest_sec: 30, tip: "Squeeze glutes and abs." }
-          ],
-          cool_down: ["Child's pose 60s"]
-        },
-        {
-          day: "Saturday", type: "Strength", focus: "Full Body", duration_min: 45,
-          warm_up: ["Dynamic flow 3 mins"],
-          exercises: [
-            { name: "Dumbbell Thrusters", sets: 4, reps: "10-12", rest_sec: 90, tip: "Fluid movement from squat to press." },
-            { name: "Kettlebell Swings", sets: 3, reps: "15-20", rest_sec: 60, tip: "Hip hinge, power from glutes." },
-            { name: "Push-Up to Rotation", sets: 3, reps: "8 each side", rest_sec: 60, tip: "Builds rotational core stability." }
-          ],
-          cool_down: ["Full body stretch 5 mins"]
-        }
-      ]
-    },
-    lifestyle_rules: {
-      sleep_hours: "7.5–8 hours. Under 7 hours raises cortisol and severely limits muscle recovery.",
-      water_liters: "3.5 liters/day. 500ml on waking, 300ml before meals.",
-      daily_steps: "8,000–10,000 steps daily. Walk after meals to blunt the glucose spike.",
-      stress_management: ["4-7-8 breathing before bed to activate parasympathetic system.", "10 mins phone-free after waking."],
-      avoid_list: ["Liquid calories (juice, sweetened chai)", "Deep-fried snacks", "Alcohol — fragments sleep and drops testosterone overnight"],
-      recovery_tips: ["Foam roll major muscle groups post-session.", "Consume 30g+ protein within 45 mins post-workout."],
-      supplement_suggestions: ["Whey Protein: 1 scoop post-workout.", "Vitamin D3: 2,000 IU daily with a fat-containing meal."],
-      habit_tracker: ["Hit calorie target?", "Hit protein target?", "Worked out?", "Drank 3.5L water?"]
+function getFallbackDietPlan(macros: MacroTargets, timing: TimingConfig, profile: Record<string, unknown>): any {
+  const dp = String(profile.dietary_pattern || "eggetarian").toLowerCase();
+  const isVegan = dp === "vegan"; const isVeg = dp === "vegetarian";
+
+  const buildMeal = (mealName: string, time: string, frac: number, index: number) => {
+    // Dynamically rotate foods so every meal is distinct
+    let pName = "Boiled eggs", pQty = "3 eggs";
+    let cName = "Oats", cQty = "60g";
+    let vName = "Mixed vegetables", vQty = "100g";
+
+    // Alternate Proteins
+    if (isVegan) {
+       pName = index % 2 === 0 ? "Tofu" : "Soya chunks dry";
+       pQty = index % 2 === 0 ? "150g" : "50g";
+    } else if (isVeg) {
+       pName = index % 2 === 0 ? "Paneer" : "Low fat curd";
+       pQty = index % 2 === 0 ? "100g" : "200g";
+    } else {
+       pName = index % 2 === 0 ? "Chicken breast" : "Boiled eggs";
+       pQty = index % 2 === 0 ? "150g raw" : "3 eggs";
     }
+
+    // Alternate Carbs
+    if (index === 0) { cName = "Oats"; cQty = "60g"; }
+    else if (index === 1) { cName = "White rice dry"; cQty = "60g"; }
+    else if (index === 2) { cName = "Roti"; cQty = "2 roti"; }
+    else { cName = "Poha"; cQty = "60g"; }
+
+    // Alternate Veggies
+    vName = index % 2 === 0 ? "Spinach" : "Cucumber";
+
+    // Pass fresh object references so the scaler doesn't mutate them globally
+    return {
+      time, name: mealName, kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, prep_time_min: 10,
+      foods: [
+        { name: pName, quantity: pQty, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, kcal: 0 },
+        { name: cName, quantity: cQty, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, kcal: 0 },
+        { name: vName, quantity: vQty, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, kcal: 0 }
+      ],
+      tip: "Weigh dry grains. Adjust spices as needed."
+    };
+  };
+
+  const buildDay = (day: string, type: string, note: string) => ({
+    day, day_name: day, type, total_kcal: macros.calories, total_protein_g: macros.protein_g, total_carbs_g: macros.carbs_g, total_fat_g: macros.fat_g, hydration_reminder: "3.5L water today.", daily_note: note,
+    meals: timing.names.map((name, i) => buildMeal(name, timing.times[i], timing.kcalSplit[i], i))
+  });
+
+  return {
+    weekly_rules: { protein_strategy: `Hit ${macros.protein_g}g daily.`, refeed_day: "Saturday refeed.", steps_target: "10,000 steps.", sleep_protocol: "7.5-8 hours.", water_target: "3.5 Liters." },
+    weekly_meals: [buildDay("Monday", "standard", "Focus on intensity."), buildDay("Tuesday", "standard", "Track macros closely."), buildDay("Wednesday", "standard", "Keep steps high."), buildDay("Thursday", "standard", "Prioritize recovery.")]
   };
 }
 
-async function callDeepSeek(prompt: string, maxTokens: number): Promise<{ content: string | null }> {
-  const key = Deno.env.get("DEEPSEEK_API_KEY");
-  if (!key) return { content: null };
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 115_000);
-
-  try {
-    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [{ role: "system", content: "You are an elite Indian Sports Nutritionist. Respond ONLY with valid JSON." }, { role: "user", content: prompt }],
-        temperature: 0.30, max_tokens: maxTokens, response_format: { type: "json_object" },
-      }),
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return { content: null };
-    const data = await res.json();
-    return { content: data.choices?.[0]?.message?.content || null };
-  } catch { clearTimeout(timer); return { content: null }; }
+function getFallbackWorkout() {
+  return {
+    workout_plan: {
+      frequency: "5 sessions per week", philosophy: "Push-Pull-Legs maximizes compound stimulus.", weekly_schedule_summary: ["Mon: Push", "Tue: Pull", "Wed: Rest", "Thu: Legs", "Fri: HIIT", "Sat: Full Body", "Sun: Rest"], rest_day_activity: "8,000 steps walk.", progressive_overload_note: "Add 2.5kg to compound lifts.",
+      sessions: [
+        { day: "Monday", type: "Strength", focus: "Push", duration_min: 50, warm_up: ["Dynamic arm warm-up"], exercises: [{ name: "Dumbbell Bench Press", sets: 4, reps: "8-10", rest_sec: 90, tip: "Scapula retracted." }, { name: "Overhead Press", sets: 3, reps: "10-12", rest_sec: 75, tip: "Core tight." }], cool_down: ["Chest stretch"] },
+        { day: "Tuesday", type: "Strength", focus: "Pull", duration_min: 50, warm_up: ["Dead hangs"], exercises: [{ name: "Lat Pulldown", sets: 4, reps: "8-10", rest_sec: 90, tip: "Drive elbows down." }, { name: "Dumbbell Rows", sets: 3, reps: "10-12", rest_sec: 75, tip: "Squeeze lats." }], cool_down: ["Lat stretch"] }
+      ]
+    },
+    lifestyle_rules: { sleep_hours: "7.5–8 hours.", water_liters: "3.5 liters/day.", daily_steps: "10,000 steps daily.", stress_management: ["Breathing rituals before sleep."], avoid_list: ["Liquid calories", "Deep fried foods"], recovery_tips: ["Post workout nutrition within 45m."], supplement_suggestions: ["Whey protein isolate"], habit_tracker: ["Hit targets?"] }
+  };
 }
 
-function buildDietPrompt(profile: Record<string, unknown>, macros: MacroTargets, timing: TimingConfig, foodType: string, notes: string): string {
+// ─────────────────────────────────────────────
+// HIGH-Tier PREMIUM PROMPT BUILDERS
+// ─────────────────────────────────────────────
+function buildDietPrompt(profile: Record<string, unknown>, macros: MacroTargets, timing: TimingConfig, foodType: string, notes: string, days: string[]): string {
   const dp = String(profile.dietary_pattern || "vegetarian").toLowerCase();
   let dietRule = "";
-  if (dp === "vegetarian") dietRule = "STRICTLY VEGETARIAN. FATAL ERROR IF YOU USE EGGS, MEAT, OR CHICKEN. Use ONLY Paneer, Soya, Dal, Curd, Whey.";
-  else if (dp === "vegan") dietRule = "STRICTLY VEGAN. NO DAIRY, NO EGGS. Use Tofu, Soya, Dal.";
-  else if (dp === "eggetarian") dietRule = "EGGETARIAN. Eggs allowed. NO MEAT/CHICKEN. Use Eggs, Paneer, Soya, Dal, Curd.";
-  else dietRule = "NON-VEG allowed. Use Chicken, Fish, Eggs, Paneer, Soya.";
+  if (dp === "vegetarian") dietRule = "STRICTLY VEGETARIAN. FATAL EXCEPTION EXCLUSION IF YOU INCLUDE EGGS, MEAT, OR FISH. Use ONLY Paneer, Soya, Dal, Curd, Milk, Whey.";
+  else if (dp === "vegan")  dietRule = "STRICTLY VEGAN. ZERO DAIRY, ZERO EGGS, ZERO MEAT. Use Tofu, Soya Chunks, Almonds, Lentils.";
+  else if (dp === "eggetarian") dietRule = "EGGETARIAN. Eggs are fully permitted. ZERO MEAT, ZERO CHICKEN, ZERO FISH. Use Eggs, Egg Whites, Paneer, Soya, Dairy.";
+  else                          dietRule = "NON-VEGETARIAN permitted. Strategically leverage Chicken Breast, Fish, Eggs along with Paneer and Soya.";
 
   const mealTargets = timing.kcalSplit.map((frac, i) => {
-    const p = Math.round(macros.protein_g * frac);
-    const c = Math.round(macros.carbs_g * frac);
-    const f = Math.round(macros.fat_g * frac);
-    const k = Math.round(macros.calories * frac);
-    return `Meal ${i + 1} (${timing.names[i]}): ${k} kcal | ${p}g Protein | ${c}g Carbs | ${f}g Fat`;
+    return `Meal ${i + 1} (${timing.names[i]}): ${Math.round(macros.calories * frac)} kcal | ${Math.round(macros.protein_g * frac)}g P | ${Math.round(macros.carbs_g * frac)}g C | ${Math.round(macros.fat_g * frac)}g F`;
   }).join("\n");
 
-  return `Generate a 4-day Indian diet plan (Mon, Tue, Wed, Thu).
-TARGETS: ${macros.calories}kcal, ${macros.protein_g}g Protein, ${macros.carbs_g}g Carbs, ${macros.fat_g}g Fat. Goal: ${sanitizeField(profile.primary_goal)}. Food style: ${foodType}.
-${notes ? `CRITICAL USER FEEDBACK/NOTES: ${notes}` : ""}
+  return `Execute deep clinical evaluation to structure a ${days.length}-day hyper-precise elite Indian diet plan (${days.join(", ")}).
+TARGETS: Exactly ${macros.calories}kcal, ${macros.protein_g}g Protein, ${macros.carbs_g}g Carbs, ${macros.fat_g}g Fat. Goal: ${sanitizeField(profile.primary_goal)}. Food Taxonomy: ${foodType}.
+${notes ? `MANDATORY CLIENT ADAPTATIONS: ${notes}` : ""}
 
-CRITICAL RULES:
-1. DIET: ${dietRule}
-2. SCHEDULE: Exactly ${timing.count} meals per day. 
-   STRICT PER-MEAL TARGETS:
+CRITICAL REASONING CONSTRAINTS:
+1. DIETARY BOUNDARY: ${dietRule}
+2. FREQUENCY: Exactly compile ${timing.count} separate meals per day matching these exact split profiles:
    ${mealTargets}
-3. "protein_g", "carbs_g", "fat_g", "kcal" MUST be pure integers (e.g., 15), NOT strings.
-4. "quantity" MUST be exact grams (e.g. "100g", "60g dry"). Never "bowl".
+3. COMPUTE TRUTHS: Ensure every single ingredient matches a raw entity from common Indian sports science data. Grains must list dry weights (e.g. "60g dry").
+4. ALL NUMERIC FIELDS ("protein_g", "carbs_g", "fat_g", "kcal") MUST BE INTEGER LITERALS, NOT STRINGS.
+5. CULINARY VARIETY: This is a premium plan. DO NOT copy-paste meals across days. You MUST rotate primary protein and carb sources. If ${days[0]} has a Paneer dish, ${days[1] || "the next day"} MUST feature Soya, Tofu, Legumes, or a completely different preparation.
 
-OUTPUT JSON SCHEMA:
+OUTPUT JSON FORMAT ONLY:
 {
   "weekly_rules": { "protein_strategy": "...", "refeed_day": "...", "steps_target": "...", "sleep_protocol": "...", "water_target": "..." },
   "weekly_meals": [
     {
-      "day": "Monday", "day_name": "Monday", "type": "standard",
+      "day": "${days[0]}", "day_name": "${days[0]}", "type": "standard",
       "total_kcal": ${macros.calories}, "total_protein_g": ${macros.protein_g}, "total_carbs_g": ${macros.carbs_g}, "total_fat_g": ${macros.fat_g},
       "hydration_reminder": "...", "daily_note": "...",
       "meals": [
         {
           "time": "${timing.times[0]}", "name": "${timing.names[0]}",
-          "kcal": 500, "protein_g": 35, "carbs_g": 40, "fat_g": 12, "fiber_g": 5, "prep_time_min": 10,
+          "kcal": 500, "protein_g": 35, "carbs_g": 40, "fat_g": 12, "fiber_g": 5, "prep_time_min": 15,
           "foods": [{ "name": "Paneer", "quantity": "100g", "protein_g": 18, "carbs_g": 3, "fat_g": 14, "fiber_g": 0, "kcal": 210 }],
           "tip": "..."
         }
@@ -5507,10 +6121,54 @@ OUTPUT JSON SCHEMA:
 }`;
 }
 
-function buildWorkoutPrompt(): string {
-  return `Generate a 5-day/week workout plan + lifestyle rules. Return JSON ONLY with keys "workout_plan" and "lifestyle_rules".`;
+function buildWorkoutPrompt(profile: Record<string, unknown>, macros: MacroTargets): string {
+  const goal = sanitizeField(profile.primary_goal);
+  const stress = parseInt(String(profile.stress_level || "5"));
+  const sleep = parseFloat(String(profile.sleep_hours || "7.5"));
+  
+  return `Act as a world-class Tier-1 Strength Coach and Bio-Architectural Adaptation Expert. Construct a highly personalized, elite 5-day training program and neurological recovery schema.
+CLIENT PROFILE: Goal: ${goal} | Calculated Intake: ${macros.calories} kcal | Sleep Status: ${sleep} hours | Neurological Stress Baseline: ${stress}/10.
+
+INSTRUCTIONS:
+1. CUSTOM SPLIT EVOLUTION: Build a periodized routine optimal for ${goal}. For fat_loss/recomp, emphasize compound load density to safeguard lean mass. For muscle_gain, optimize hyper-trophy volume splits.
+2. STRESS INTERCEPTION: Adjust overall system volume based on stress level (${stress}/10). If stress is high (>=7), include advanced nervous system recovery protocols.
+3. OUTPUT FORMAT: Respond ONLY with a clean JSON object containing keys "workout_plan" and "lifestyle_rules".
+
+SCHEMA BLUEPRINT:
+{
+  "workout_plan": {
+    "frequency": "5 sessions per week",
+    "philosophy": "Detailed physiological rationale engineered for this client...",
+    "weekly_schedule_summary": ["Day 1: ...", "Day 2: ..."],
+    "rest_day_activity": "Active recovery protocol...",
+    "progressive_overload_note": "Specific metrics to track for linear or block progression...",
+    "sessions": [
+      {
+        "day": "Monday", "type": "Strength", "focus": "Push (Chest/Shoulders/Triceps)", "duration_min": 50,
+        "warm_up": ["Specific mobility drill 1", "Specific dynamic activation 2"],
+        "exercises": [
+          { "name": "Incline Dumbbell Press", "sets": 4, "reps": "8-10", "rest_sec: 90, "tip": "Control eccentrics; drive straight up." }
+        ],
+        "cool_down": ["Targeted fascial stretch"]
+      }
+    ]
+  },
+  "lifestyle_rules": {
+    "sleep_hours": "Exact target based on data...",
+    "water_liters": "3.5 Liters daily minimum...",
+    "daily_steps": "8,000-10,000 steps...",
+    "stress_management": ["Actionable bio-feedback habit 1", "Actionable behavior 2"],
+    "avoid_list": ["Specific inflammatory substances or behaviors..."],
+    "recovery_tips": ["Post-workout amino/protein window timing...", "CNS down-regulation method..."],
+    "supplement_suggestions": ["Whey Protein Isolate - 1 scoop post-training", "Creatine Monohydrate - 3g daily"],
+    "habit_tracker": ["Metric 1", "Metric 2"]
+  }
+}`;
 }
 
+// ─────────────────────────────────────────────
+// MAIN ENGINE HANDLER
+// ─────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -5518,6 +6176,7 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) throw new Error("Unauthorized");
+    
     const tokenHash = await hashTokenDeno(authHeader.replace("Bearer ", "").trim());
     const { data: session } = await supabaseAdmin.from("sessions").select("user_id").eq("token_hash", tokenHash).gt("expires_at", new Date().toISOString()).maybeSingle();
     if (!session) throw new Error("Invalid session");
@@ -5527,39 +6186,62 @@ serve(async (req) => {
     if (!profile) throw new Error("Profile not found");
 
     const timingPref = String(profile.meal_timing || "4_meals").toLowerCase();
-    const timing = getMealTimingConfig(timingPref);
-    const macros = calcMacros(profile);
-    const foodType = String(body.food_type || profile.food_type || "indian");
-    const notes = String(body.notes || "").slice(0, 500);
+    const timing     = getMealTimingConfig(timingPref);
+    const macros     = calcMacros(profile);
+    const foodType   = String(body.food_type || profile.food_type || "indian");
+    const notes      = String(body.notes || "").slice(0, 500);
 
-    const [dietResult, workoutResult] = await Promise.allSettled([
-      callDeepSeek(buildDietPrompt(profile, macros, timing, foodType, notes), 6000),
-      callDeepSeek(buildWorkoutPrompt(), 3500)
+    // ── High-Status Cognitive Core execution ──
+    const systemPrompt = "You are a world-class Master Sports Dietitian and Elite Tier-1 Strength Coach specializing in bio-architectural transformation for Indian athletes. Analyze all variables step-by-step to produce hyper-optimized, mathematically flawless elite protocols. Return ONLY a single, valid, perfectly formatted JSON object matching the requested schema exactly, with zero conversational prose.";
+
+    const [diet1Result, diet2Result, workoutResult] = await Promise.allSettled([
+      fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("DEEPSEEK_API_KEY")}` },
+        body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: buildDietPrompt(profile, macros, timing, foodType, notes, ["Monday", "Tuesday"]) }], temperature: 0.65, max_tokens: 3000, response_format: { type: "json_object" } }),
+        signal: AbortSignal.timeout(50_000)
+      }).then(res => res.json()).then(d => d.choices?.[0]?.message?.content || null),
+      
+      fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("DEEPSEEK_API_KEY")}` },
+        body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: buildDietPrompt(profile, macros, timing, foodType, notes, ["Wednesday", "Thursday"]) }], temperature: 0.65, max_tokens: 3000, response_format: { type: "json_object" } }),
+        signal: AbortSignal.timeout(50_000)
+      }).then(res => res.json()).then(d => d.choices?.[0]?.message?.content || null),
+
+      fetch("https://api.deepseek.com/v1/chat/completions", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${Deno.env.get("DEEPSEEK_API_KEY")}` },
+        body: JSON.stringify({ model: "deepseek-chat", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: buildWorkoutPrompt(profile, macros) }], temperature: 0.30, max_tokens: 3000, response_format: { type: "json_object" } }),
+        signal: AbortSignal.timeout(50_000)
+      }).then(res => res.json()).then(d => d.choices?.[0]?.message?.content || null)
     ]);
 
-    let dietRaw = dietResult.status === "fulfilled" && dietResult.value.content ? safeParseJSON(dietResult.value.content) : null;
-    
-    // Auto-scale macros and expand to 7 days
-    if (dietRaw && dietRaw.weekly_meals) {
-      dietRaw = expandToSevenDays(dietRaw, macros);
-      dietRaw = validateAndScaleMacros(dietRaw, macros);
+    const d1 = diet1Result.status === "fulfilled" ? safeParseJSON(diet1Result.value ?? "") : null;
+    const d2 = diet2Result.status === "fulfilled" ? safeParseJSON(diet2Result.value ?? "") : null;
+
+    let dietRaw: any;
+    if (d1?.weekly_meals && d2?.weekly_meals) {
+      dietRaw = { ...d1, weekly_meals: [...ensureArray(d1.weekly_meals), ...ensureArray(d2.weekly_meals)] };
+    } else if (d1?.weekly_meals) {
+      dietRaw = d1;
+    } else if (d2?.weekly_meals) {
+      dietRaw = d2;
     } else {
-      console.warn(`[${userId}] Diet AI failed. Injecting fallback.`);
-      throw new Error("AI generation timed out. Please try again.");
+      console.warn(`[${userId}] Both diet chunks failed. Injecting fallback.`);
+      dietRaw = getFallbackDietPlan(macros, timing, profile);
     }
 
-    let workoutData = workoutResult.status === "fulfilled" && workoutResult.value.content ? safeParseJSON(workoutResult.value.content) : null;
-    
-    // Deep Validation for Workout (Check if AI returned an empty object)
-    const hasValidSessions = Array.isArray(workoutData?.workout_plan?.sessions) && workoutData.workout_plan.sessions.length >= 3;
-    const hasValidRules = Array.isArray(workoutData?.lifestyle_rules?.avoid_list) && workoutData.lifestyle_rules.avoid_list.length > 0;
+    dietRaw = expandToSevenDays(dietRaw, macros);
+    dietRaw = validateAndScaleMacros(dietRaw, macros);
+
+    let workoutData = workoutResult.status === "fulfilled" ? safeParseJSON(workoutResult.value ?? "") : null;
+    const hasValidSessions = Array.isArray(workoutData?.workout_plan?.sessions) && workoutData.workout_plan.sessions.length >= 2;
+    const hasValidRules    = Array.isArray(workoutData?.lifestyle_rules?.avoid_list) && workoutData.lifestyle_rules.avoid_list.length > 0;
 
     if (!workoutData || !workoutData.workout_plan || !hasValidSessions || !hasValidRules) {
       console.warn(`[${userId}] Workout AI empty/invalid. Injecting detailed fallback.`);
       workoutData = getFallbackWorkout();
     }
 
-    const fullPlan = { ...dietRaw, workout_plan: workoutData.workout_plan, lifestyle_rules: workoutData.lifestyle_rules || (dietRaw as any).weekly_rules, daily_macros: macros };
+    const fullPlan = { ...dietRaw, workout_plan: workoutData.workout_plan, lifestyle_rules: workoutData.lifestyle_rules || dietRaw.weekly_rules, daily_macros: macros };
 
     const { count } = await supabaseAdmin.from("meal_plans").select("*", { count: "exact", head: true }).eq("user_id", userId);
     await supabaseAdmin.from("meal_plans").upsert({ user_id: userId, plan_week: (count || 0) + 1, plan_json: fullPlan, food_type: foodType, meal_count: timing.count, generated_at: new Date().toISOString() }, { onConflict: "user_id,plan_week" });

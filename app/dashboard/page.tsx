@@ -86,7 +86,7 @@ function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number;
   const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
   const r = 28; const circ = 2 * Math.PI * r; const offset = circ - (pct / 100) * circ;
   return (
-    <div className="flex items-center gap-4 bg-[#17171f] border border-[#222230] rounded-2xl px-5 py-4">
+    <div className="flex items-center gap-4 bg-[#17171f] border border-[#222230] rounded-2xl px-5 py-4 h-full">
       <div className="relative w-14 h-14">
         <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
           <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
@@ -205,7 +205,7 @@ export default function DashboardPage() {
 
   const [plan, setPlan] = useState<any>(null)
   const [allPlans, setAllPlans] = useState<any[]>([]) 
-  const [activePlanId, setActivePlanId] = useState<string | null>(null) // TRACKS WHICH WEEK IS BEING VIEWED
+  const [activePlanId, setActivePlanId] = useState<string | null>(null)
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   
@@ -213,10 +213,12 @@ export default function DashboardPage() {
   const [planFeedback, setPlanFeedback] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [userName, setUserName] = useState('Athlete')
+
   const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
   const [streak, setStreak] = useState(0)
+  
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
-  // Sync state from Database
   const loadDashboard = async () => {
     setLoading(true); setError(null)
     try {
@@ -233,9 +235,10 @@ export default function DashboardPage() {
         const plansList = data.plans || []
         setAllPlans(plansList)
         
-        // If we don't have an active plan selected, default to the most recent one
+        // Always cleanly default to the very first plan in the DB (the newest one) 
         if (plansList.length > 0 && !activePlanId) {
-          setPlan(plansList[0].plan_json)
+          // ✅ FIX: Inject the plan_week from the outer shell directly into the loaded state
+          setPlan({ ...plansList[0].plan_json, plan_week: plansList[0].plan_week })
           setActivePlanId(plansList[0].id)
         }
       }
@@ -253,18 +256,30 @@ export default function DashboardPage() {
   useEffect(() => { loadDashboard() }, [])
   useEffect(() => { if (plan) loadFoodLog() }, [plan, loadFoodLog])
 
-  // -------------------- CORE LOGIC --------------------
-  const isLatestPlan = allPlans.length > 0 && activePlanId === allPlans[0].id;
+  // ✅ FIX: This guarantees that clicking "Back to Current" accurately knows the latest plan's ID
+  const isLatestPlan = allPlans.length === 0 || !activePlanId || activePlanId === allPlans[0].id;
   const isHistorical = !isLatestPlan;
   
   const totalGeneratedWeeks = allPlans.length
-  // Determine the week number currently being viewed based on its index in the allPlans array
-  const activePlanIndex = allPlans.findIndex(p => p.id === activePlanId)
-  const viewingWeekNum = activePlanIndex !== -1 ? totalGeneratedWeeks - activePlanIndex : 0
+  
+  // ✅ FIX: Safe-fallback to the injected plan_week if it exists, otherwise do math
+  const viewingWeekNum = plan?.plan_week || (allPlans.find(p => p.id === activePlanId)?.plan_week) || totalGeneratedWeeks
 
   const paidWeeks = profile?.paid_weeks ?? 1
   const totalVisibleWeeks = Math.max(totalGeneratedWeeks, paidWeeks) + 1
   const weeksArray = Array.from({ length: totalVisibleWeeks }, (_, i) => i + 1)
+
+  const latestPlanRecord = allPlans.length > 0 ? allPlans[0] : null;
+  const planStartDate = latestPlanRecord?.generated_at ? new Date(latestPlanRecord.generated_at) : null;
+  const daysPassedSinceGeneration = planStartDate 
+    ? Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000))
+    : 0;
+  
+  const planDayIndex = Math.min(7, Math.max(1, daysPassedSinceGeneration + 1));
+  const daysLeft = Math.max(0, 7 - daysPassedSinceGeneration);
+  const isPlanCompleted = daysPassedSinceGeneration >= 7; 
+  const isLastDay = planDayIndex === 7 && !isPlanCompleted;
+  const needsToBuyNextWeek = isPlanCompleted && totalGeneratedWeeks >= paidWeeks;
 
   const todayMeals = (() => {
     const days = ensureArray(plan?.weekly_meals)
@@ -274,15 +289,15 @@ export default function DashboardPage() {
 
   const eatenCount = todayMeals.filter((_, i) => todayLogs.find(l => l.meal_index === i)?.eaten).length
 
-  // -------------------- ACTIONS --------------------
   const switchPlan = (planRecord: any) => {
-    setPlan(planRecord.plan_json)
+    // ✅ FIX: Inject plan_week when switching so the UI never says "Week 0"
+    setPlan({ ...planRecord.plan_json, plan_week: planRecord.plan_week })
     setActivePlanId(planRecord.id)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
-    if (isHistorical) return; // Prevent logging meals on old plans
+    if (isHistorical || isPlanCompleted) return; 
     
     setTodayLogs(prev => {
       const existing = prev.find(l => l.meal_index === mealIndex)
@@ -302,7 +317,6 @@ export default function DashboardPage() {
       const res = await fetch('/api/meal-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: planFeedback.trim() }) })
       const data = await res.json().catch(() => null)
       if (res.ok && data?.success) {
-        // Reset active plan to force it to load the newly generated plan
         setActivePlanId(null)
         await loadDashboard()
         setPlanFeedback('')
@@ -312,8 +326,9 @@ export default function DashboardPage() {
   }
 
   const handleLogout = async () => {
+    setIsLoggingOut(true)
     try { await fetch('/api/logout', { method: 'POST' }) } catch {}
-    router.push('/login')
+    setTimeout(() => { router.push('/') }, 1200)
   }
 
   if (loading && !plan) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
@@ -321,24 +336,58 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white relative pb-20">
       
-      {/* Immersive Loading State */}
       {generatingWeek !== null && <GeneratingScreen name={userName} week={generatingWeek} />}
+      
+      {isLoggingOut && (
+        <div className="fixed inset-0 z-[100] bg-[#0c0c10]/95 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
+          <span className="text-5xl mb-4">🔒</span>
+          <p className="text-xl font-bold text-white tracking-wide">Logging out securely...</p>
+        </div>
+      )}
 
-      {/* Header */}
       <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-md z-10">
-        <h1 className="text-xl font-extrabold tracking-tight cursor-pointer">
+        <h1 className="text-xl font-extrabold tracking-tight cursor-pointer" onClick={() => {setActivePlanId(null); loadDashboard()}}>
           Aapka<span className="text-yellow-500">Coach</span>
         </h1>
         <div className="flex items-center gap-2">
           <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">💳 Billing</button>
           <button onClick={() => router.push('/dashboard/progress')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">📊 Progress</button>
           <button onClick={() => router.push('/dashboard/profile')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">👤 Profile</button>
-          <button onClick={handleLogout} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">Logout</button>
+          <button onClick={handleLogout} disabled={isLoggingOut} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors disabled:opacity-50">Logout</button>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-4 md:px-6 pt-6 animate-in fade-in duration-500">
         {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6 text-red-400 text-sm font-mono text-center">{error}</div>}
+
+        {isLatestPlan && isLastDay && !needsToBuyNextWeek && paidWeeks <= totalGeneratedWeeks && (
+          <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-[0_0_15px_rgba(234,179,8,0.1)]">
+            <div>
+              <p className="text-yellow-400 font-bold text-sm">⚠️ Last day of Week {totalGeneratedWeeks}</p>
+              <p className="text-gray-400 text-xs mt-1">Tomorrow your plan expires. Unlock the next week to keep your progress moving.</p>
+            </div>
+            <button onClick={() => router.push('/dashboard/subscriptions')} className="bg-yellow-500 text-black px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap">
+              Unlock Week {totalGeneratedWeeks + 1}
+            </button>
+          </div>
+        )}
+
+        {isLatestPlan && !isPlanCompleted && plan && (
+          <div className="mb-6 bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm">
+            <div className="flex justify-between items-end mb-3">
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Week {totalGeneratedWeeks} Progress</p>
+                <p className="text-xl font-bold text-white mt-1">Day {planDayIndex} <span className="text-gray-500 text-sm font-normal">of 7</span></p>
+              </div>
+              <div className="text-right">
+                <p className="text-yellow-500 font-bold font-mono text-sm">{daysLeft} {daysLeft === 1 ? 'day' : 'days'} left</p>
+              </div>
+            </div>
+            <div className="w-full bg-[#0c0c10] rounded-full h-2.5 border border-[#222230] overflow-hidden">
+              <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full transition-all duration-1000 ease-out" style={{ width: `${(planDayIndex / 7) * 100}%` }}></div>
+            </div>
+          </div>
+        )}
 
         {!plan ? (
           <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center my-12 shadow-2xl">
@@ -357,58 +406,74 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            {/* Banner if viewing history */}
             {isHistorical && (
               <div className="mb-6 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center justify-between">
                 <p className="text-yellow-400 text-sm font-semibold">You are viewing an archived plan (Week {viewingWeekNum}).</p>
-                <button onClick={() => switchPlan(allPlans[0])} className="text-xs bg-[#0c0c10] text-gray-300 px-3 py-1.5 rounded-lg border border-[#222230] hover:text-white">Back to Current</button>
+                <button onClick={() => {setActivePlanId(null); loadDashboard()}} className="text-xs bg-[#0c0c10] text-gray-300 px-3 py-1.5 rounded-lg border border-[#222230] hover:text-white">Back to Current</button>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-                <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
-                <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
+            {isLatestPlan && needsToBuyNextWeek ? (
+              <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center mb-8 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-yellow-500"></div>
+                <div className="text-6xl mb-4">🏆</div>
+                <h2 className="text-2xl font-bold mb-2 text-white">Week {totalGeneratedWeeks} Completed!</h2>
+                <p className="text-gray-400 text-sm mb-6 leading-relaxed px-2">
+                  You have successfully finished this week's protocol. The AI needs to recalculate your TDEE and adjust your macros for the next phase to prevent plateaus.
+                </p>
                 <button 
-                  onClick={() => router.push(isHistorical ? `/dashboard/week?planId=${activePlanId}` : '/dashboard/week')} 
-                  className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors"
+                  onClick={() => router.push('/dashboard/subscriptions')} 
+                  className="w-full sm:w-auto px-10 py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-2xl hover:bg-yellow-400 transition-all shadow-[0_0_20px_rgba(234,179,8,0.3)]"
                 >
-                  View Full Diet Plan →
+                  Unlock Week {totalGeneratedWeeks + 1}
                 </button>
+                <p className="text-xs text-gray-500 mt-4">You can still review your old plans in the Vault below.</p>
               </div>
-              <div className="flex flex-col gap-4">
-                <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
-              </div>
-            </div>
-
-            {/* MACROS */}
-            <MacroRings plan={plan} todayLogs={todayLogs} todayDayName={todayDayName} />
-
-            {/* TODAY'S COMPACT CHECKLIST */}
-            {todayMeals.length > 0 && (
-              <div className="mb-12">
-                <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-2">
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2"><span>🎯</span> Today's Checklist</h2>
-                  <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+                    <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
+                    <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
+                    <button 
+                      onClick={() => router.push(isHistorical ? `/dashboard/week?planId=${activePlanId}` : '/dashboard/week')} 
+                      className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors"
+                    >
+                      View Full Diet Plan →
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-4">
+                    <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
+                  </div>
                 </div>
-                {todayMeals.map((meal, i) => (
-                  <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} isHistorical={isHistorical} />
-                ))}
-              </div>
+
+                <MacroRings plan={plan} todayLogs={todayLogs} todayDayName={todayDayName} />
+
+                {todayMeals.length > 0 && (
+                  <div className="mb-12">
+                    <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-2">
+                      <h2 className="text-lg font-bold text-white flex items-center gap-2"><span>🎯</span> {isHistorical ? 'Checklist (Archived)' : "Today's Checklist"}</h2>
+                      <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
+                    </div>
+                    {todayMeals.map((meal, i) => (
+                      <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} isHistorical={isHistorical} />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
 
-            {/* TRANSFORMATION ROADMAP */}
             <div className="mt-8">
               <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2"><span>🗺️</span> Transformation Journey</h2>
               <div className="space-y-4 relative">
                 <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-[#222230] -z-10"></div>
                 
                 {weeksArray.map(w => {
-                  const isGenerated = w <= totalGeneratedWeeks
-                  const planForThisWeek = isGenerated ? allPlans[totalGeneratedWeeks - w] : null
-                  const isCurrentlyViewing = planForThisWeek?.id === activePlanId
+                  // ✅ FIX: Use plan_week directly instead of error-prone array math
+                  const planForThisWeek = allPlans.find(p => p.plan_week === w);
+                  const isGenerated = !!planForThisWeek;
+                  const isCurrentlyViewing = planForThisWeek?.id === activePlanId;
 
-                  // 1. GENERATED WEEKS (Current or History)
                   if (isGenerated) {
                     return (
                       <div key={w} className="flex items-center gap-4">
@@ -431,7 +496,6 @@ export default function DashboardPage() {
                     )
                   }
 
-                  // 2. UNLOCKED (READY TO GENERATE)
                   if (w > totalGeneratedWeeks && w <= paidWeeks) {
                     return (
                       <div key={w} className="flex gap-4">
@@ -448,7 +512,6 @@ export default function DashboardPage() {
                     )
                   }
 
-                  // 3. LOCKED
                   return (
                     <div key={w} className="flex items-center gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
                       <div className="w-12 h-12 rounded-full bg-[#0c0c10] text-gray-600 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10">🔒</div>

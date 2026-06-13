@@ -48,7 +48,7 @@ const FOOD_TYPES = [
 ]
 
 // ─────────────────────────────────────────────
-// STABLE UI COMPONENTS (Moved outside to fix focus bug)
+// STABLE UI COMPONENTS
 // ─────────────────────────────────────────────
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div className="bg-[#121218] border border-[#222230] rounded-3xl p-6 space-y-6 shadow-lg">
@@ -187,8 +187,13 @@ export default function ProfileEditPage() {
       }
 
       setSuccess('✅ Profile saved! Return to the Dashboard when you are ready to generate your next week.')
+      // 🟢 AUTO-SCROLL TO TOP ON SUCCESS
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
     } catch (err: any) {
       setError(err?.message || 'Save failed')
+      // 🟢 AUTO-SCROLL TO TOP ON ERROR
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setSaving(false)
     }
@@ -238,8 +243,8 @@ export default function ProfileEditPage() {
       <main className="max-w-2xl mx-auto px-4 md:px-6 py-8 space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
         
         {/* Global status messages */}
-        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm font-mono text-center">{error}</div>}
-        {success && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-green-400 text-sm font-mono text-center">{success}</div>}
+        {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm font-mono text-center shadow-lg">{error}</div>}
+        {success && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-green-400 text-sm font-mono text-center shadow-lg">{success}</div>}
 
         {/* BASIC INFO */}
         <Section title="👤 Basic Info">

@@ -29,7 +29,7 @@ export default function LoginPage() {
       const data = await res.json()
       if (res.ok) {
         setOtpSent(true)
-        setMessage('Check your email for the verification code')
+        setMessage('✅ Code sent! Check your email inbox.')
       } else {
         setMessage(data.error || 'Failed to send OTP')
       }
@@ -55,15 +55,17 @@ export default function LoginPage() {
 
       const data = await res.json()
       if (res.ok) {
-        // Redirect based on onboarding status
-        router.push(data.user?.onboardingCompleted ? '/dashboard' : '/onboarding')
+        setMessage('✅ Verification successful! Securing session...')
+        // Add a slight delay so the user can read the success message
+        setTimeout(() => {
+          router.push(data.user?.onboardingCompleted ? '/dashboard' : '/onboarding')
+        }, 1200)
       } else {
-        setMessage(data.error || 'Verification failed')
+        setMessage(data.error || 'Verification failed. Incorrect code.')
+        setVerifying(false)
       }
     } catch (error) {
       setMessage('Network error. Please try again.')
-      console.error(error)
-    } finally {
       setVerifying(false)
     }
   }
@@ -78,9 +80,9 @@ export default function LoginPage() {
       })
 
       if (res.ok) {
-        setMessage('Code resent! Check your email.')
+        setMessage('✅ Code resent! Check your email.')
       } else {
-        setMessage('Failed to resend code')
+        setMessage('Failed to resend code. Try again later.')
       }
     } catch (error) {
       setMessage('Network error')
@@ -89,89 +91,110 @@ export default function LoginPage() {
     }
   }
 
+  // Helper to determine if the message is a success or error message
+  const isSuccessMessage = message.includes('✅')
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0c0c10] text-white p-4">
-      {!otpSent ? (
-        <form onSubmit={handleSendOtp} className="w-full max-w-sm space-y-6">
-          <h1 className="text-3xl font-extrabold text-center">
-            Aapka<span className="text-yellow-500">Coach</span>
-          </h1>
-          <p className="text-center text-gray-400 text-sm">
-            Enter your email to sign in or create an account.
-          </p>
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            className="w-full p-3 bg-[#17171f] border border-[#222230] rounded-lg text-white placeholder-gray-500"
-            required
-            disabled={sending}
-          />
-          {message && (
-            <p className={`text-sm ${message.includes('success') ? 'text-green-400' : 'text-red-400'}`}>
-              {message}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={sending}
-            className="w-full py-3 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition"
-          >
-            {sending ? 'Sending...' : 'Send Code'}
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleVerifyOtp} className="w-full max-w-sm space-y-6">
-          <h1 className="text-3xl font-extrabold text-center">Check your inbox</h1>
-          <p className="text-center text-gray-400 text-sm">
-            We sent a 6‑digit code to <span className="text-yellow-500">{email}</span>
-          </p>
-          <input
-            type="text"
-            placeholder="000000"
-            value={token}
-            onChange={e => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            className="w-full p-3 bg-[#17171f] border border-[#222230] rounded-lg text-white text-center text-2xl tracking-widest"
-            maxLength={6}
-            required
-            disabled={verifying}
-            autoFocus
-          />
-          {message && (
-            <p className={`text-sm ${message.includes('success') ? 'text-green-400' : 'text-red-400'}`}>
-              {message}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={verifying}
-            className="w-full py-3 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition"
-          >
-            {verifying ? 'Verifying...' : 'Verify Code'}
-          </button>
-          <button
-            type="button"
-            onClick={handleResend}
-            disabled={sending}
-            className="w-full py-2 text-yellow-500 hover:text-yellow-400 text-sm font-medium"
-          >
-            {sending ? 'Resending...' : "Didn't receive code? Resend"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOtpSent(false)
-              setEmail('')
-              setToken('')
-              setMessage('')
-            }}
-            className="w-full py-2 text-gray-400 hover:text-gray-300 text-sm"
-          >
-            Back to email entry
-          </button>
-        </form>
-      )}
+    <div className="min-h-screen flex items-center justify-center bg-[#0c0c10] text-white p-4 relative overflow-hidden">
+      
+      {/* Background ambient glow */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-yellow-500/5 rounded-full blur-[120px] pointer-events-none"></div>
+
+      <div className="w-full max-w-sm relative z-10">
+        {!otpSent ? (
+          <form onSubmit={handleSendOtp} className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="text-center mb-8">
+              <h1 className="text-4xl font-extrabold tracking-tight mb-2">
+                Aapka<span className="text-yellow-500">Coach</span>
+              </h1>
+              <p className="text-gray-400 text-sm">
+                Enter your email to sign in or create an account.
+              </p>
+            </div>
+            
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full p-4 bg-[#17171f] border border-[#222230] rounded-xl text-white placeholder-gray-500 focus:border-yellow-500 focus:ring-4 focus:ring-yellow-500/10 outline-none transition-all"
+              required
+              disabled={sending}
+            />
+            
+            {message && (
+              <div className={`p-3 rounded-xl text-sm font-medium text-center animate-in zoom-in-95 duration-200 ${isSuccessMessage ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+                {message}
+              </div>
+            )}
+            
+            <button
+              type="submit"
+              disabled={sending}
+              className="w-full py-4 bg-yellow-500 text-black font-bold text-lg rounded-xl hover:bg-yellow-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+            >
+              {sending ? 'Sending Secure Code...' : 'Continue'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleVerifyOtp} className="space-y-6 animate-in slide-in-from-right-8 duration-500">
+            <div className="text-center mb-8">
+              <h1 className="text-3xl font-extrabold mb-2">Check your inbox</h1>
+              <p className="text-gray-400 text-sm">
+                We sent a 6‑digit code to <span className="text-yellow-500 font-medium">{email}</span>
+              </p>
+            </div>
+            
+            <input
+              type="text"
+              placeholder="000000"
+              value={token}
+              onChange={e => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              className="w-full p-4 bg-[#17171f] border border-[#222230] rounded-xl text-white text-center text-3xl tracking-[0.5em] font-mono focus:border-yellow-500 focus:ring-4 focus:ring-yellow-500/10 outline-none transition-all"
+              maxLength={6}
+              required
+              disabled={verifying}
+              autoFocus
+            />
+            
+            {message && (
+              <div className={`p-3 rounded-xl text-sm font-medium text-center animate-in zoom-in-95 duration-200 ${isSuccessMessage ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+                {message}
+              </div>
+            )}
+            
+            <button
+              type="submit"
+              disabled={verifying || token.length < 6}
+              className="w-full py-4 bg-yellow-500 text-black font-bold text-lg rounded-xl hover:bg-yellow-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+            >
+              {verifying ? 'Verifying...' : 'Verify Code'}
+            </button>
+            
+            <div className="flex flex-col gap-2 pt-4">
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={sending}
+                className="w-full py-2 text-yellow-500 hover:text-yellow-400 text-sm font-medium transition-colors"
+              >
+                {sending ? 'Resending...' : "Didn't receive code? Resend"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOtpSent(false)
+                  setToken('')
+                  setMessage('')
+                }}
+                className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm transition-colors"
+              >
+                Use a different email
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   )
 }
