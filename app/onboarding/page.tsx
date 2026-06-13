@@ -171,8 +171,8 @@ export default function OnboardingPage() {
       }
 
       // Step 2: Trigger AI plan generation via the correct endpoint
-      // FIX: was calling /api/meal-plan (wrong). Must call /api/generate-plan.
-      const planRes = await fetch('/api/generate-plan', {
+      // FIX: was calling /api/meal-plan (wrong). Must call /api/meal-plan.
+      const planRes = await fetch('/api/meal-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -46,8 +46,6 @@ app/
       route.ts
     food-log/
       route.ts
-    generate-plan/
-      route.ts
     logout/
       route.ts
     me/
@@ -2005,10 +2003,6 @@ export const supabaseAdmin = createClient(
 <svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
 </file>
 
-<file path="supabase/.temp/cli-latest">
-v2.105.0
-</file>
-
 <file path="supabase/.temp/gotrue-version">
 v2.189.0
 </file>
@@ -2193,19 +2187,6 @@ ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS food_type TEXT DEFAULT 'indian';
 
 COMMIT;
-</file>
-
-<file path="supabase/config.toml">
-[functions.generate-plan]
-enabled = true
-verify_jwt = false
-import_map = "./functions/generate-plan/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/generate-plan/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/generate-plan/*.html" ]
 </file>
 
 <file path="supabase/MIGRATION_CHECKLIST.md">
@@ -2552,98 +2533,6 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 </file>
 
-<file path="app/api/generate-plan/route.ts">
-import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { supabaseAdmin } from '@/lib/supabase'
-import { hashToken } from '@/lib/otp'
-
-const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
-
-export async function POST(req: Request) {
-  try {
-    const cookieStore = await cookies()
-    const authToken = cookieStore.get('auth-token')?.value
-
-    if (!authToken) {
-      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
-    }
-
-    // Validate session exists before forwarding
-    const tokenHash = hashToken(authToken)
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select('user_id')
-      .eq('token_hash', tokenHash)
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle()
-
-    if (sessionError || !session) {
-      const res = NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
-      res.cookies.delete('auth-token')
-      return res
-    }
-
-    const body = await req.json().catch(() => ({}))
-    const notes = typeof body.notes === 'string' ? body.notes.trim() : ''
-    const requestedFoodType = typeof body.food_type === 'string' ? body.food_type.trim().toLowerCase() : ''
-
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .select('paid_weeks, food_type')
-      .eq('user_id', session.user_id)
-      .single()
-
-    if (profileError || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
-    }
-
-    const { count, error: countError } = await supabaseAdmin
-      .from('meal_plans')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', session.user_id)
-
-    if (countError) {
-      console.error('Plan count error:', countError)
-      return NextResponse.json({ error: 'Unable to check current plan status' }, { status: 500 })
-    }
-
-    const planCount = typeof count === 'number' ? count : 0
-    const nextWeek = planCount + 1
-
-    if (planCount > 0 && nextWeek > (profile.paid_weeks || 1)) {
-      return NextResponse.json({ error: `Week ${nextWeek} is locked. Buy week ${nextWeek} to continue your subscription.` }, { status: 402 })
-    }
-
-    const foodType = requestedFoodType || (profile && profile.food_type) || 'indian'
-
-    // Forward request to Supabase Edge Function with server-side cookie token
-    const edgeRes = await fetch(EDGE_FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-        'Authorization': `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({ notes, food_type: foodType }),
-    })
-
-    const edgeData = await edgeRes.json().catch(() => null)
-
-    if (!edgeRes.ok) {
-      console.error('Edge function error:', edgeRes.status, edgeData)
-      return NextResponse.json({ error: edgeData?.error ?? 'Plan generation failed. Please try again.' }, { status: edgeRes.status })
-    }
-
-    // Return the edge function JSON directly so client receives { success, plan }
-    return NextResponse.json(edgeData)
-  } catch (error) {
-    console.error('POST /api/generate-plan error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-</file>
-
 <file path="app/dashboard/week/page.tsx">
 'use client'
 
@@ -2721,7 +2610,7 @@ export default function WeekPlanPage() {
   useEffect(() => {
     if (plan && plan.weekly_meals) {
       const todayIndex = plan.weekly_meals.findIndex(
-        (day: any) => day.day?.toLowerCase() === todayDayName.toLowerCase()
+        (day: any) => String(day.day_name || day.day).toLowerCase() === todayDayName.toLowerCase()
       )
       if (todayIndex !== -1) {
         setActiveDay(todayIndex)
@@ -2784,7 +2673,7 @@ export default function WeekPlanPage() {
     <div>
       <div className="mb-4 flex overflow-x-auto gap-2 pb-2">
         {days.map((day: any, idx: number) => {
-          const isDayToday = day.day?.toLowerCase() === todayDayName.toLowerCase()
+          const isDayToday = String(day.day_name || day.day).toLowerCase() === todayDayName.toLowerCase()
           return (
             <button key={idx} onClick={() => setActiveDay(idx)}
               className={`px-4 py-2 rounded-full font-semibold text-sm whitespace-nowrap transition-all relative ${
@@ -2923,6 +2812,1085 @@ export default function WeekPlanPage() {
 }
 </file>
 
+<file path="app/layout.tsx">
+import type { Metadata } from "next";
+import { Geist, Geist_Mono, Inter } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+});
+
+export const metadata: Metadata = {
+  title: "AapkaCoach | AI-Powered Diet & Fitness Coach for Indians",
+  description: "Get a personalised 7-day Indian meal plan, workout split, and progress tracker — built by AI around dal-roti, hostel budgets, and your exact body composition.",
+  keywords: ["diet plan india", "AI nutritionist", "Indian meal plan", "body recomposition", "fat loss india", "hostel diet"],
+  openGraph: {
+    title: "AapkaCoach — AI Diet & Fitness Coach",
+    description: "Personalised Indian meal plans, workout splits, and body progress tracking powered by DeepSeek AI.",
+    type: "website",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+  lang="en"
+  suppressHydrationWarning
+  className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} h-full antialiased`}
+>
+      <body className="min-h-full flex flex-col">{children}</body>
+    </html>
+  );
+}
+</file>
+
+<file path="app/page.tsx">
+import Link from 'next/link'
+
+export default function HomePage() {
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white font-sans selection:bg-yellow-500 selection:text-black">
+      {/* -------- NAVIGATION -------- */}
+      <nav className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
+        <div className="text-2xl font-extrabold tracking-tight">
+          Aapka<span className="text-yellow-500">Coach</span>
+        </div>
+        <Link
+          href="/login"
+          className="bg-yellow-500 text-black px-5 py-2 rounded-full font-semibold text-sm hover:bg-yellow-400 transition shadow-lg shadow-yellow-500/20"
+        >
+          Get Started
+        </Link>
+      </nav>
+
+      {/* -------- HERO -------- */}
+      <section className="px-4 md:px-6 py-16 md:py-24 max-w-3xl mx-auto text-center">
+        <h1 className="text-4xl md:text-6xl font-extrabold leading-tight tracking-tight">
+          Your AI‑Powered<br />
+          <span className="text-yellow-500">Diet & Fitness Coach</span>
+        </h1>
+        <p className="text-gray-400 mt-6 text-lg md:text-xl max-w-xl mx-auto">
+          A personal nutritionist, personal trainer, and progress tracker – all in your pocket.
+          Built for Indian lifestyles, hostel‑friendly, and surprisingly affordable.
+        </p>
+        <div className="mt-8 flex justify-center gap-4">
+          <Link
+            href="/login"
+            className="bg-yellow-500 text-black px-8 py-3 rounded-full font-bold text-lg hover:bg-yellow-400 transition shadow-xl shadow-yellow-500/20"
+          >
+            Start Your Transformation
+          </Link>
+          <Link
+            href="#how-it-works"
+            className="border border-[#222230] px-8 py-3 rounded-full font-semibold text-gray-300 hover:border-yellow-500 transition"
+          >
+            How It Works
+          </Link>
+        </div>
+        <div className="mt-12 flex justify-center gap-8 text-sm text-gray-500">
+          <span>✅ No credit card</span>
+          <span>✅ Under 2 minutes setup</span>
+          <span>✅ Indian foods only</span>
+        </div>
+      </section>
+
+      {/* -------- FEATURES -------- */}
+      <section id="features" className="px-4 md:px-6 py-16 max-w-5xl mx-auto">
+        <h2 className="text-3xl font-bold text-center mb-12">Why AapkaCoach?</h2>
+        <div className="grid md:grid-cols-3 gap-8">
+          {[
+            {
+              icon: '🧠',
+              title: 'AI‑Personalized Plans',
+              desc: 'DeepSeek AI crafts a 7‑day diet based on your body composition, goal, budget, and hostel‑mess constraints. No generic templates.',
+            },
+            {
+              icon: '⏱️',
+              title: 'Frictionless Login',
+              desc: 'Just enter your email and a one‑time code. No passwords. No social sign‑in. Instant access on any device.',
+            },
+            {
+              icon: '📊',
+              title: 'Real Progress Tracking',
+              desc: 'Log your BCA scans and see your body fat, weight, and visceral fat trend over time with beautiful charts.',
+            },
+            {
+              icon: '🥘',
+              title: '100% Indian Food',
+              desc: 'From dal‑chawal to paneer bhurji, every meal is something you can actually find in your mess or cook cheaply.',
+            },
+            {
+              icon: '📱',
+              title: 'Works Like an App',
+              desc: 'Add to your home screen and use it offline. Feels native, built with cutting‑edge web tech.',
+            },
+            {
+              icon: '🔒',
+              title: 'Privacy First',
+              desc: 'Your health data stays encrypted. We never sell or share your information. No ads, ever.',
+            },
+          ].map((feature, idx) => (
+            <div
+              key={idx}
+              className="bg-[#17171f] border border-[#222230] rounded-2xl p-6 hover:border-yellow-500/30 transition-colors"
+            >
+              <div className="text-3xl mb-4">{feature.icon}</div>
+              <h3 className="font-bold text-lg mb-2">{feature.title}</h3>
+              <p className="text-gray-400 text-sm">{feature.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* -------- HOW IT WORKS -------- */}
+      <section id="how-it-works" className="px-4 md:px-6 py-16 max-w-3xl mx-auto">
+        <h2 className="text-3xl font-bold text-center mb-12">Get Your Plan in 3 Steps</h2>
+        <div className="space-y-10">
+          {[
+            {
+              step: '01',
+              title: 'Answer a few questions',
+              desc: 'Tell us your age, weight, body fat %, activity level, and diet preferences. Takes less than 2 minutes.',
+            },
+            {
+              step: '02',
+              title: 'AI builds your plan',
+              desc: 'Our engine calculates your exact calories and macros, then writes a custom 7‑day menu with Indian foods.',
+            },
+            {
+              step: '03',
+              title: 'Follow & track progress',
+              desc: 'Log your daily meals and weekly BCA scans. Watch your body fat drop and health improve week by week.',
+            },
+          ].map((item, idx) => (
+            <div key={idx} className="flex gap-6 items-start">
+              <div className="text-yellow-500 text-5xl font-extrabold leading-none">{item.step}</div>
+              <div>
+                <h3 className="text-xl font-bold">{item.title}</h3>
+                <p className="text-gray-400 mt-1">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* -------- SOCIAL PROOF -------- */}
+      <section className="px-4 md:px-6 py-16 max-w-3xl mx-auto text-center">
+        <h2 className="text-3xl font-bold mb-8">Trusted by fitness enthusiasts</h2>
+        <div className="grid md:grid-cols-2 gap-6">
+          {[
+            {
+              quote: 'AapkaCoach made me go from 17% to 13% body fat in 10 weeks while eating hostel food. I never thought it was possible.',
+              name: 'Abhinav Gupta',
+              detail: 'Student, 23 • 74kg • 178cm',
+            },
+            {
+              quote: 'I tried a dozen diet apps. This is the only one that understands Indian meals and doesn’t ask me to eat avocado toast.',
+              name: 'Riya S.',
+              detail: 'Working professional, 28',
+            },
+          ].map((testimonial, idx) => (
+            <div
+              key={idx}
+              className="bg-[#17171f] border border-[#222230] rounded-2xl p-6 text-left"
+            >
+              <p className="text-gray-300 italic">“{testimonial.quote}”</p>
+              <div className="mt-4 font-semibold">{testimonial.name}</div>
+              <div className="text-xs text-gray-500 mt-1">{testimonial.detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* -------- CTA -------- */}
+      <section className="px-4 md:px-6 py-20 text-center">
+        <div className="max-w-xl mx-auto bg-gradient-to-br from-yellow-500/10 to-transparent border border-yellow-500/20 rounded-3xl p-8 md:p-12">
+          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+            Ready to transform your body?
+          </h2>
+          <p className="text-gray-400 mb-8">
+            Join hundreds of users who are losing fat, building muscle, and understanding their nutrition — without leaving their hostel.
+          </p>
+          <Link
+            href="/login"
+            className="inline-block bg-yellow-500 text-black px-10 py-4 rounded-full font-bold text-lg hover:bg-yellow-400 transition shadow-xl shadow-yellow-500/20"
+          >
+            Start Free
+          </Link>
+          <p className="text-xs text-gray-500 mt-4">No credit card required. Cancel anytime.</p>
+        </div>
+      </section>
+
+      {/* -------- FOOTER -------- */}
+      <footer className="border-t border-[#222230] px-4 md:px-6 py-8 text-center text-gray-600 text-sm">
+        <p>AapkaCoach © {new Date().getFullYear()} — Built for Indian bodies, by people who understand.</p>
+      </footer>
+    </div>
+  )
+}
+</file>
+
+<file path="supabase/.temp/cli-latest">
+v2.106.0
+</file>
+
+<file path="supabase/config.toml">
+[functions.generate-plan]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/generate-plan/index.ts"
+</file>
+
+<file path=".gitignore">
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# Next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+</file>
+
+<file path="package.json">
+{
+  "name": "aapkacoach",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.0",
+    "@supabase/supabase-js": "^2.108.0",
+    "jose": "^6.2.3",
+    "next": "16.2.7",
+    "nodemailer": "^6.9.13",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.7",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules", "supabase"]
+}
+</file>
+
+<file path="app/api/meal-plan/route.ts">
+import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { supabaseAdmin } from '@/lib/supabase'
+import { hashToken } from '@/lib/otp'
+
+// Edge function URL
+const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
+
+// ─────────────────────────────────────────────
+// GET  /api/meal-plan  — fetch the latest saved plan
+// ─────────────────────────────────────────────
+export async function GET() {
+  try {
+    const cookieStore = await cookies()
+    const authToken = cookieStore.get('auth-token')?.value
+
+    if (!authToken) {
+      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
+    }
+
+    const tokenHash = hashToken(authToken)
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('user_id')
+      .eq('token_hash', tokenHash)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle()
+
+    if (sessionError || !session) {
+      const res = NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
+      res.cookies.delete('auth-token')
+      return res
+    }
+
+    const { data: planRow, error: planError } = await supabaseAdmin
+      .from('meal_plans')
+      .select('plan_json, generated_at')
+      .eq('user_id', session.user_id)
+      .order('generated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (planError) {
+      console.error('Plan fetch error:', planError)
+      return NextResponse.json({ error: 'Failed to fetch plan' }, { status: 500 })
+    }
+
+    if (!planRow) return NextResponse.json({ plan: null })
+
+    const planJson = planRow.plan_json || {}
+    const planWeek = planJson.plan_week ?? null
+    return NextResponse.json({ plan: { ...planJson, plan_week: planWeek, generated_at: planRow.generated_at } })
+  } catch (error) {
+    console.error('GET /api/meal-plan error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+// ─────────────────────────────────────────────
+// POST /api/meal-plan  — generate a new plan via Edge Function
+// ─────────────────────────────────────────────
+export async function POST(req: Request) {
+  try {
+    const cookieStore = await cookies()
+    const authToken = cookieStore.get('auth-token')?.value
+
+    if (!authToken) {
+      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
+    }
+
+    const tokenHash = hashToken(authToken)
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('user_id')
+      .eq('token_hash', tokenHash)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle()
+
+    if (sessionError || !session) {
+      const res = NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
+      res.cookies.delete('auth-token')
+      return res
+    }
+
+    const body = await req.json().catch(() => ({}))
+    const notes = typeof body.notes === 'string' ? body.notes.trim() : ''
+    const requestedFoodType = typeof body.food_type === 'string' ? body.food_type.trim().toLowerCase() : ''
+
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('paid_weeks, food_type')
+      .eq('user_id', session.user_id)
+      .single()
+
+    if (profileError || !profile) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+    }
+
+    const { count, error: countError } = await supabaseAdmin
+      .from('meal_plans')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', session.user_id)
+
+    if (countError) {
+      console.error('Plan count error:', countError)
+      return NextResponse.json({ error: 'Unable to check current plan status' }, { status: 500 })
+    }
+
+    const planCount = typeof count === 'number' ? count : 0
+    const nextWeek = planCount + 1
+
+    if (planCount > 0 && nextWeek > (profile.paid_weeks || 1)) {
+      return NextResponse.json({
+        error: `Week ${nextWeek} is locked. Buy week ${nextWeek} to continue your subscription.`,
+      }, { status: 402 })
+    }
+
+    const foodType = requestedFoodType || (profile && profile.food_type) || 'indian'
+
+    // ── Call the Supabase Edge Function ──
+    const edgeRes = await fetch(EDGE_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ user_id: session.user_id, notes, food_type: foodType }),
+    })
+
+    const edgeData = await edgeRes.json()
+
+    if (!edgeRes.ok) {
+      console.error('Edge function error:', edgeRes.status, edgeData)
+      // TEMPORARY – show the real error in the browser
+      return NextResponse.json(
+        { error: edgeData?.error || 'Plan generation failed', details: edgeData },
+        { status: edgeRes.status }
+      )
+    }
+
+    return NextResponse.json({ success: true, plan: edgeData.plan })
+  } catch (error) {
+    console.error('POST /api/meal-plan error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+</file>
+
+<file path="app/dashboard/page.tsx">
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { useEffect, useState, useCallback } from 'react'
+
+// -------------------- Types --------------------
+interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
+
+// -------------------- Meal Card --------------------
+function MealCard({
+  meal, mealIndex, today, todayLogs, onToggle,
+}: {
+  meal: any; mealIndex: number; today: string; todayLogs: FoodLog[]; onToggle: (idx: number, name: string, eaten: boolean) => void
+}) {
+  const log = todayLogs.find(l => l.meal_index === mealIndex)
+  const eaten = log?.eaten ?? false
+
+  return (
+    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${
+      eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'
+    }`}>
+      <div className="flex justify-between items-start mb-4">
+        <div className="flex-1">
+          <span className="text-xs text-[#6b6b7e] uppercase tracking-[2px] font-mono bg-[#222230] px-2.5 py-1 rounded">
+            {meal.time}
+          </span>
+          <h3 className={`text-xl font-bold mt-2 ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
+        </div>
+        <div className="flex items-center gap-3 ml-4">
+          <div className="text-right">
+            <span className="text-3xl font-extrabold text-yellow-500">{meal.kcal}</span>
+            <span className="text-sm text-gray-500"> kcal</span>
+            <p className="text-xs text-green-400 font-mono mt-1">{meal.protein_g}g protein</p>
+          </div>
+          <button
+            onClick={() => onToggle(mealIndex, meal.name, !eaten)}
+            title={eaten ? 'Mark as not eaten' : 'Mark as eaten'}
+            className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${
+              eaten
+                ? 'bg-green-500/20 border-green-500 text-green-400 scale-105'
+                : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'
+            }`}
+          >
+            {eaten ? '✓' : '○'}
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {meal.foods?.map((food: any, j: number) => (
+          <div key={j} className="flex justify-between py-2.5 border-t border-[#222230]/75 text-sm items-center">
+            <span className="text-gray-200">
+              {food.name}{' '}
+              {food.quantity && <span className="text-gray-500 text-xs ml-1">({food.quantity})</span>}
+              <span className="inline-flex gap-1.5 ml-3">
+                {food.protein_g != null && <span className="text-[9px] font-mono bg-green-400/10 text-green-400 px-1.5 py-0.5 rounded">P {food.protein_g}g</span>}
+                {food.carbs_g != null && <span className="text-[9px] font-mono bg-blue-400/10 text-blue-400 px-1.5 py-0.5 rounded">C {food.carbs_g}g</span>}
+                {food.fat_g != null && <span className="text-[9px] font-mono bg-yellow-500/10 text-yellow-400 px-1.5 py-0.5 rounded">F {food.fat_g}g</span>}
+              </span>
+            </span>
+            <span className="text-gray-400 font-mono text-xs">{food.cost_inr != null ? `₹${food.cost_inr}` : ''}</span>
+          </div>
+        ))}
+      </div>
+
+      {meal.tip && (
+        <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">
+          💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// -------------------- Adherence Ring --------------------
+function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number; streak: number }) {
+  const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
+  const r = 28
+  const circ = 2 * Math.PI * r
+  const offset = circ - (pct / 100) * circ
+  return (
+    <div className="flex items-center gap-3 bg-[#17171f] border border-[#222230] rounded-xl px-4 py-2.5">
+      <div className="relative w-14 h-14">
+        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
+          <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
+          <circle
+            cx="35" cy="35" r={r}
+            stroke={pct === 100 ? '#3dd68c' : pct >= 50 ? '#f4a623' : '#60a5fa'}
+            strokeWidth="6" fill="none"
+            strokeDasharray={circ}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+          />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center text-xs font-extrabold font-mono text-white">{pct}%</span>
+      </div>
+      <div>
+        <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">Today's Adherence</p>
+        <p className="text-sm font-bold text-white">{eaten}/{total} meals eaten</p>
+        {streak > 0 && (
+          <p className="text-xs text-orange-400 font-mono mt-0.5">🔥 {streak} day streak</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// -------------------- Macro Progress Rings --------------------
+function MacroRing({ label, consumed, target, color, unit = 'g' }: {
+  label: string; consumed: number; target: number; color: string; unit?: string
+}) {
+  const pct = target > 0 ? Math.min(100, Math.round((consumed / target) * 100)) : 0
+  const r = 32
+  const circ = 2 * Math.PI * r
+  const offset = circ - (pct / 100) * circ
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative w-20 h-20">
+        <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r={r} stroke="#222230" strokeWidth="7" fill="none" />
+          <circle cx="40" cy="40" r={r} stroke={color} strokeWidth="7" fill="none"
+            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.7s cubic-bezier(0.4,0,0.2,1)' }} />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-sm font-extrabold text-white font-mono">{pct}%</span>
+        </div>
+      </div>
+      <div className="text-center">
+        <p className="text-xs font-bold font-mono" style={{ color }}>{consumed}{unit}</p>
+        <p className="text-[10px] text-gray-500 uppercase tracking-wider font-mono">{label}</p>
+        <p className="text-[9px] text-gray-600 font-mono">/ {target}{unit}</p>
+      </div>
+    </div>
+  )
+}
+
+function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
+  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+  const days = plan?.weekly_meals || []
+  // ✅ Fixed: Cast to String and fallback to day_name
+  const todayDay = days.find((d: any) => 
+    String(d.day_name || d.day).toLowerCase() === todayDayName.toLowerCase()
+  )
+  const meals = todayDay?.meals || []
+
+  let consumedP = 0, consumedC = 0, consumedF = 0
+  meals.forEach((meal: any, i: number) => {
+    const log = todayLogs.find(l => l.meal_index === i)
+    if (log?.eaten) {
+      meal.foods?.forEach((food: any) => {
+        consumedP += food.protein_g || 0
+        consumedC += food.carbs_g || 0
+        consumedF += food.fat_g || 0
+      })
+    }
+  })
+
+  const targets = plan?.daily_macros || {}
+
+  return (
+    <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Today's Macro Progress</p>
+          <p className="text-sm text-gray-400 mt-0.5">Tap ✓ on meals below to update</p>
+        </div>
+        <span className="text-xs text-gray-600 font-mono">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
+      </div>
+      <div className="flex justify-around">
+        <MacroRing label="Protein" consumed={Math.round(consumedP)} target={targets.protein_g || 0} color="#3dd68c" />
+        <MacroRing label="Carbs" consumed={Math.round(consumedC)} target={targets.carbs_g || 0} color="#60a5fa" />
+        <MacroRing label="Fat" consumed={Math.round(consumedF)} target={targets.fat_g || 0} color="#f4a623" />
+      </div>
+    </div>
+  )
+}
+
+// -------------------- Generating Screen --------------------
+const STEPS = [
+  { icon: '⚖️', label: 'Reading your body metrics…' },
+  { icon: '🔥', label: 'Calculating BMR & TDEE via Mifflin-St Jeor…' },
+  { icon: '🥩', label: 'Setting protein at 2.0 g / kg body weight…' },
+  { icon: '🧮', label: 'Splitting macros — carbs & fats…' },
+  { icon: '🍱', label: 'Building 7-day Indian meal rotation…' },
+  { icon: '🏋️', label: 'Designing your workout split…' },
+  { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
+]
+
+function GeneratingScreen() {
+  const [stepIdx, setStepIdx] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setStepIdx(i => (i + 1) % STEPS.length), 3500)
+    return () => clearInterval(t)
+  }, [])
+  const s = STEPS[stepIdx]
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex flex-col items-center justify-center gap-6 px-6">
+      <div className="text-6xl animate-pulse">{s.icon}</div>
+      <div className="text-center max-w-sm">
+        <p className="text-xl font-bold font-mono text-white">{s.label}</p>
+        <p className="text-sm text-gray-500 mt-2">Your AI plan is being generated…</p>
+      </div>
+      <div className="w-full max-w-xs space-y-2 mt-4">
+        {STEPS.map((step, i) => (
+          <div key={i} className={`flex items-center gap-2 text-xs font-mono transition-all ${i === stepIdx ? 'text-yellow-400' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
+            <span>{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
+            <span>{step.label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="w-full bg-[#17171f] rounded-full h-1.5 border border-[#222230]">
+        <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
+      </div>
+      <p className="text-center text-xs text-gray-500 font-mono mt-3">This takes 15–40 seconds. Please don't close this tab.</p>
+    </div>
+  )
+}
+
+// -------------------- Main Dashboard --------------------
+export default function DashboardPage() {
+  const router = useRouter()
+  const today = new Date().toISOString().split('T')[0]
+  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+
+  const [plan, setPlan] = useState<any>(null)
+  const [profile, setProfile] = useState<any>(null)
+  const [planFeedback, setPlanFeedback] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [buying, setBuying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [userName, setUserName] = useState('Athlete')
+
+  // Plan timing data
+  const planWeek = plan?.plan_week ?? 1
+  const planStartDate = plan?.generated_at ? new Date(plan.generated_at) : null
+  const planDayIndex = planStartDate
+    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
+    : 1
+  const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
+  const nextWeek = planWeek + 1
+  const hasSubscriptionForNextWeek = profile?.paid_weeks >= nextWeek
+
+  // Food log state
+  const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
+  const [streak, setStreak] = useState(0)
+
+  // FIX: derive today's meals in the main component so MealCard can be rendered
+  const todayMeals: any[] = (() => {
+    const days = plan?.weekly_meals || []
+    // Use String() cast and fallback to day_name to prevent crashes from legacy number data
+    const todayDay = days.find((d: any) => 
+      String(d.day_name || d.day).toLowerCase() === todayDayName.toLowerCase()
+    )
+    return todayDay?.meals || []
+  })()
+
+  const eatenCount = todayMeals.filter((_: any, i: number) =>
+    todayLogs.find(l => l.meal_index === i)?.eaten
+  ).length
+
+  useEffect(() => { loadPlan() }, [])
+  useEffect(() => { if (plan) loadFoodLog() }, [plan])
+
+  const loadPlan = async () => {
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/api/me')
+      if (!res.ok) { router.push('/login'); return }
+      const { user } = await res.json()
+      setUserName(user?.profile?.name || user?.email || 'Athlete')
+      setProfile(user?.profile || null)
+
+      const planRes = await fetch('/api/meal-plan')
+      if (planRes.ok) {
+        const data = await planRes.json()
+        setPlan(data.plan || null)
+      } else { setPlan(null) }
+    } catch { setError('Failed to load your plan') }
+    finally { setLoading(false) }
+  }
+
+  const loadFoodLog = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/food-log?date=${today}`)
+      if (res.ok) {
+        const data = await res.json()
+        setTodayLogs(data.logs || [])
+        setStreak(data.streak || 0)
+      }
+    } catch { /* silent */ }
+  }, [today])
+
+  const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
+    setTodayLogs(prev => {
+      const existing = prev.find(l => l.meal_index === mealIndex)
+      if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
+      return [...prev, { plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }]
+    })
+    try {
+      await fetch('/api/food-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }),
+      })
+      const res = await fetch(`/api/food-log?date=${today}`)
+      if (res.ok) { const d = await res.json(); setStreak(d.streak || 0) }
+    } catch { /* silent */ }
+  }
+
+  const generateNextWeek = async () => {
+    setGenerating(true); setError(null)
+    try {
+      const res = await fetch('/api/meal-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: planFeedback.trim() }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data) {
+        setError(data?.error || 'Failed to generate next week')
+      } else if (data.success) {
+        setPlan(data.plan)
+        setPlanFeedback('')
+      } else {
+        setError(data.error || 'Failed to generate next week')
+      }
+    } catch {
+      setError('Failed to generate next week')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const buyNextWeek = async () => {
+    setBuying(true); setError(null)
+    try {
+      const res = await fetch('/api/subscription', { method: 'POST' })
+      if (!res.ok) {
+        const d = await res.json()
+        setError(d.error || 'Failed to buy subscription week')
+      } else {
+        await loadPlan()
+      }
+    } catch {
+      setError('Failed to purchase week')
+    } finally {
+      setBuying(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    try { await fetch('/api/logout', { method: 'POST' }) } catch {}
+    router.push('/login')
+  }
+
+  // ---------- RENDER STATES ----------
+  if (loading) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
+      Loading AapkaCoach profile...
+    </div>
+  )
+
+  // FIX: generating no longer replaces the whole page — it only disables the button
+  // The GeneratingScreen is kept for the "no plan yet" first-time generation flow only
+
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
+        <h1 className="text-2xl font-extrabold tracking-tight cursor-pointer" onClick={() => router.push('/dashboard')}>
+          Aapka<span className="text-yellow-500">Coach</span>
+        </h1>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button onClick={() => router.push('/dashboard/plans')}
+            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
+            📥 All Plans
+          </button>
+          <button onClick={() => router.push('/dashboard/subscriptions')}
+            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
+            💳 Subscribe
+          </button>
+          <button onClick={() => router.push('/dashboard/progress')}
+            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
+            📊 Progress
+          </button>
+          <button onClick={() => router.push('/dashboard/history')}
+            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
+            📋 History
+          </button>
+          <button onClick={() => router.push('/dashboard/profile')}
+            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
+            👤 Profile
+          </button>
+          <span className="text-xs text-gray-400 font-mono hidden md:inline bg-[#17171f] px-3 py-2 rounded-full border border-[#222230]">{userName}</span>
+          <button onClick={handleLogout}
+            className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">
+            Logout
+          </button>
+        </div>
+      </header>
+
+      {/* Main */}
+      <main className="max-w-4xl mx-auto px-4 md:px-6 pt-6 pb-16">
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4 text-red-400 text-sm font-mono">
+            {error}
+          </div>
+        )}
+
+        {!plan ? (
+          /* ── No plan yet ── */
+          generating ? (
+            <GeneratingScreen />
+          ) : (
+            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
+              <div className="text-5xl mb-4">📋</div>
+              <h2 className="text-2xl font-bold mb-3 text-white">No Active Plan Found</h2>
+              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+                We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.
+              </p>
+              <button
+                onClick={() => generateNextWeek()}
+                disabled={generating}
+                className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50"
+              >
+                {generating ? 'Generating…' : 'Generate My AI Plan 🤖'}
+              </button>
+            </div>
+          )
+        ) : (
+          <div>
+            {/* ── Plan meta + subscription bar ── */}
+            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-4 mb-4 flex flex-col gap-4">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <p className="text-xs text-gray-400 uppercase tracking-wider font-mono">Daily Target</p>
+                  <p className="text-2xl font-extrabold text-white mt-0.5">
+                    {plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span>
+                  </p>
+                </div>
+                <div className="text-right text-xs font-mono text-gray-500">
+                  <p>{plan.daily_macros?.protein_g}g protein</p>
+                  <p>{plan.daily_macros?.carbs_g}g carbs · {plan.daily_macros?.fat_g}g fat</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Week</p>
+                  <p className="text-lg font-bold text-white mt-1">Week {planWeek}</p>
+                </div>
+                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Day Progress</p>
+                  <p className="text-lg font-bold text-white mt-1">Day {planDayIndex} of 7</p>
+                </div>
+                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Days Left</p>
+                  <p className="text-lg font-bold text-white mt-1">{daysLeft} days</p>
+                </div>
+              </div>
+
+              {planStartDate && (
+                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Generated On</p>
+                  <p className="text-lg font-bold text-white mt-1">
+                    {planStartDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+              )}
+
+              <div className="bg-[#0a0a10] rounded-2xl border border-[#222230] p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-white">Subscription: <span className="text-yellow-400 font-mono">{profile?.paid_weeks ?? 1} week{(profile?.paid_weeks ?? 1) !== 1 ? 's' : ''}</span></p>
+                  <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs px-2 py-1 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded hover:bg-yellow-500/20">Manage</button>
+                </div>
+                <div className="w-full bg-[#1a1a24] rounded-full h-2 overflow-hidden">
+                  <div className="bg-gradient-to-r from-green-500 to-yellow-500 h-full" style={{ width: '100%' }}></div>
+                </div>
+                {!hasSubscriptionForNextWeek && (
+                  <p className="text-yellow-300 text-xs mt-2">🔒 Buy week {nextWeek} to unlock continuous improvement</p>
+                )}
+                {hasSubscriptionForNextWeek && profile?.paid_weeks > planWeek && (
+                  <p className="text-green-300 text-xs mt-2">✓ Week {nextWeek} unlocked. Generate when ready.</p>
+                )}
+              </div>
+            </div>
+
+            {/* ── Adherence Ring ── */}
+            <div className="mb-4">
+              <AdherenceRing
+                eaten={eatenCount}
+                total={todayMeals.length}
+                streak={streak}
+              />
+            </div>
+
+            {/* ── Macro Progress Rings ── */}
+            <MacroRings plan={plan} todayLogs={todayLogs} />
+
+            {/* ── TODAY'S MEALS — FIX: was never rendered ── */}
+            {todayMeals.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-bold text-white">
+                    Today's Meals
+                    <span className="text-xs text-gray-500 font-normal font-mono ml-2">({todayDayName})</span>
+                  </h2>
+                  <span className="text-xs text-gray-500 font-mono">{eatenCount}/{todayMeals.length} eaten</span>
+                </div>
+                {todayMeals.map((meal: any, i: number) => (
+                  <MealCard
+                    key={i}
+                    meal={meal}
+                    mealIndex={i}
+                    today={today}
+                    todayLogs={todayLogs}
+                    onToggle={toggleMealEaten}
+                  />
+                ))}
+              </div>
+            )}
+
+            {todayMeals.length === 0 && (
+              <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-2xl p-6 text-center mb-6">
+                <p className="text-gray-500 text-sm font-mono">No meals found for {todayDayName} in this plan.</p>
+                <p className="text-gray-600 text-xs mt-1">Check the full week plan below.</p>
+              </div>
+            )}
+
+            {/* ── Link to full week plan ── */}
+            <button
+              onClick={() => router.push('/dashboard/week')}
+              className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg mb-4"
+            >
+              View Full Week Plan → (Diet · Workout · Lifestyle)
+            </button>
+
+            {/* ── Generate next week (if subscription allows) ── */}
+            {hasSubscriptionForNextWeek && (
+              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
+                <h3 className="font-bold text-white mb-1">Generate Week {nextWeek}</h3>
+                <p className="text-xs text-gray-500 mb-3">Add optional notes before generating your next plan.</p>
+                <textarea
+                  value={planFeedback}
+                  onChange={e => setPlanFeedback(e.target.value)}
+                  placeholder="e.g. more variety, less rice, felt low energy on Thursday…"
+                  className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-sm resize-none min-h-[80px] focus:border-yellow-500 outline-none mb-3"
+                />
+                <button
+                  onClick={generateNextWeek}
+                  disabled={generating}
+                  className="w-full py-3 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50"
+                >
+                  {generating ? '🧠 Generating Week ' + nextWeek + '…' : '🚀 Generate Week ' + nextWeek}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}
+</file>
+
 <file path="app/onboarding/page.tsx">
 'use client'
 
@@ -2975,12 +3943,12 @@ function calculateMacroTargets(form: any) {
 const TOTAL_STEPS = 5
 const stepLabels = ['About You', 'Body Scan', 'Lifestyle', 'Diet', 'Goals']
 const stepDescriptions = [
-  "Let's start with the basics.",
-  "Enter your latest BCA or tape measurements.",
-  "Tell us about your daily routine.",
-  "Dietary preferences and budget.",
-  "What do you want to achieve?",
-];
+  'Let’s start with the basics.',
+  'Enter your latest BCA or tape measurements.',
+  'Tell us about your daily routine.',
+  'Dietary preferences and budget.',
+  'What do you want to achieve?',
+]
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -3097,8 +4065,8 @@ export default function OnboardingPage() {
       }
 
       // Step 2: Trigger AI plan generation via the correct endpoint
-      // FIX: was calling /api/meal-plan (wrong). Must call /api/generate-plan.
-      const planRes = await fetch('/api/generate-plan', {
+      // FIX: was calling /api/meal-plan (wrong). Must call /api/meal-plan.
+      const planRes = await fetch('/api/meal-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3503,962 +4471,6 @@ export default function OnboardingPage() {
 }
 </file>
 
-<file path="app/layout.tsx">
-import type { Metadata } from "next";
-import { Geist, Geist_Mono, Inter } from "next/font/google";
-import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-});
-
-export const metadata: Metadata = {
-  title: "AapkaCoach | AI-Powered Diet & Fitness Coach for Indians",
-  description: "Get a personalised 7-day Indian meal plan, workout split, and progress tracker — built by AI around dal-roti, hostel budgets, and your exact body composition.",
-  keywords: ["diet plan india", "AI nutritionist", "Indian meal plan", "body recomposition", "fat loss india", "hostel diet"],
-  openGraph: {
-    title: "AapkaCoach — AI Diet & Fitness Coach",
-    description: "Personalised Indian meal plans, workout splits, and body progress tracking powered by DeepSeek AI.",
-    type: "website",
-  },
-};
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html
-  lang="en"
-  suppressHydrationWarning
-  className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} h-full antialiased`}
->
-      <body className="min-h-full flex flex-col">{children}</body>
-    </html>
-  );
-}
-</file>
-
-<file path="app/page.tsx">
-import Link from 'next/link'
-
-export default function HomePage() {
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white font-sans selection:bg-yellow-500 selection:text-black">
-      {/* -------- NAVIGATION -------- */}
-      <nav className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
-        <div className="text-2xl font-extrabold tracking-tight">
-          Aapka<span className="text-yellow-500">Coach</span>
-        </div>
-        <Link
-          href="/login"
-          className="bg-yellow-500 text-black px-5 py-2 rounded-full font-semibold text-sm hover:bg-yellow-400 transition shadow-lg shadow-yellow-500/20"
-        >
-          Get Started
-        </Link>
-      </nav>
-
-      {/* -------- HERO -------- */}
-      <section className="px-4 md:px-6 py-16 md:py-24 max-w-3xl mx-auto text-center">
-        <h1 className="text-4xl md:text-6xl font-extrabold leading-tight tracking-tight">
-          Your AI‑Powered<br />
-          <span className="text-yellow-500">Diet & Fitness Coach</span>
-        </h1>
-        <p className="text-gray-400 mt-6 text-lg md:text-xl max-w-xl mx-auto">
-          A personal nutritionist, personal trainer, and progress tracker – all in your pocket.
-          Built for Indian lifestyles, hostel‑friendly, and surprisingly affordable.
-        </p>
-        <div className="mt-8 flex justify-center gap-4">
-          <Link
-            href="/login"
-            className="bg-yellow-500 text-black px-8 py-3 rounded-full font-bold text-lg hover:bg-yellow-400 transition shadow-xl shadow-yellow-500/20"
-          >
-            Start Your Transformation
-          </Link>
-          <Link
-            href="#how-it-works"
-            className="border border-[#222230] px-8 py-3 rounded-full font-semibold text-gray-300 hover:border-yellow-500 transition"
-          >
-            How It Works
-          </Link>
-        </div>
-        <div className="mt-12 flex justify-center gap-8 text-sm text-gray-500">
-          <span>✅ No credit card</span>
-          <span>✅ Under 2 minutes setup</span>
-          <span>✅ Indian foods only</span>
-        </div>
-      </section>
-
-      {/* -------- FEATURES -------- */}
-      <section id="features" className="px-4 md:px-6 py-16 max-w-5xl mx-auto">
-        <h2 className="text-3xl font-bold text-center mb-12">Why AapkaCoach?</h2>
-        <div className="grid md:grid-cols-3 gap-8">
-          {[
-            {
-              icon: '🧠',
-              title: 'AI‑Personalized Plans',
-              desc: 'DeepSeek AI crafts a 7‑day diet based on your body composition, goal, budget, and hostel‑mess constraints. No generic templates.',
-            },
-            {
-              icon: '⏱️',
-              title: 'Frictionless Login',
-              desc: 'Just enter your email and a one‑time code. No passwords. No social sign‑in. Instant access on any device.',
-            },
-            {
-              icon: '📊',
-              title: 'Real Progress Tracking',
-              desc: 'Log your BCA scans and see your body fat, weight, and visceral fat trend over time with beautiful charts.',
-            },
-            {
-              icon: '🥘',
-              title: '100% Indian Food',
-              desc: 'From dal‑chawal to paneer bhurji, every meal is something you can actually find in your mess or cook cheaply.',
-            },
-            {
-              icon: '📱',
-              title: 'Works Like an App',
-              desc: 'Add to your home screen and use it offline. Feels native, built with cutting‑edge web tech.',
-            },
-            {
-              icon: '🔒',
-              title: 'Privacy First',
-              desc: 'Your health data stays encrypted. We never sell or share your information. No ads, ever.',
-            },
-          ].map((feature, idx) => (
-            <div
-              key={idx}
-              className="bg-[#17171f] border border-[#222230] rounded-2xl p-6 hover:border-yellow-500/30 transition-colors"
-            >
-              <div className="text-3xl mb-4">{feature.icon}</div>
-              <h3 className="font-bold text-lg mb-2">{feature.title}</h3>
-              <p className="text-gray-400 text-sm">{feature.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------- HOW IT WORKS -------- */}
-      <section id="how-it-works" className="px-4 md:px-6 py-16 max-w-3xl mx-auto">
-        <h2 className="text-3xl font-bold text-center mb-12">Get Your Plan in 3 Steps</h2>
-        <div className="space-y-10">
-          {[
-            {
-              step: '01',
-              title: 'Answer a few questions',
-              desc: 'Tell us your age, weight, body fat %, activity level, and diet preferences. Takes less than 2 minutes.',
-            },
-            {
-              step: '02',
-              title: 'AI builds your plan',
-              desc: 'Our engine calculates your exact calories and macros, then writes a custom 7‑day menu with Indian foods.',
-            },
-            {
-              step: '03',
-              title: 'Follow & track progress',
-              desc: 'Log your daily meals and weekly BCA scans. Watch your body fat drop and health improve week by week.',
-            },
-          ].map((item, idx) => (
-            <div key={idx} className="flex gap-6 items-start">
-              <div className="text-yellow-500 text-5xl font-extrabold leading-none">{item.step}</div>
-              <div>
-                <h3 className="text-xl font-bold">{item.title}</h3>
-                <p className="text-gray-400 mt-1">{item.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------- SOCIAL PROOF -------- */}
-      <section className="px-4 md:px-6 py-16 max-w-3xl mx-auto text-center">
-        <h2 className="text-3xl font-bold mb-8">Trusted by fitness enthusiasts</h2>
-        <div className="grid md:grid-cols-2 gap-6">
-          {[
-            {
-              quote: 'AapkaCoach made me go from 17% to 13% body fat in 10 weeks while eating hostel food. I never thought it was possible.',
-              name: 'Abhinav Gupta',
-              detail: 'Student, 23 • 74kg • 178cm',
-            },
-            {
-              quote: 'I tried a dozen diet apps. This is the only one that understands Indian meals and doesn’t ask me to eat avocado toast.',
-              name: 'Riya S.',
-              detail: 'Working professional, 28',
-            },
-          ].map((testimonial, idx) => (
-            <div
-              key={idx}
-              className="bg-[#17171f] border border-[#222230] rounded-2xl p-6 text-left"
-            >
-              <p className="text-gray-300 italic">“{testimonial.quote}”</p>
-              <div className="mt-4 font-semibold">{testimonial.name}</div>
-              <div className="text-xs text-gray-500 mt-1">{testimonial.detail}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------- CTA -------- */}
-      <section className="px-4 md:px-6 py-20 text-center">
-        <div className="max-w-xl mx-auto bg-gradient-to-br from-yellow-500/10 to-transparent border border-yellow-500/20 rounded-3xl p-8 md:p-12">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            Ready to transform your body?
-          </h2>
-          <p className="text-gray-400 mb-8">
-            Join hundreds of users who are losing fat, building muscle, and understanding their nutrition — without leaving their hostel.
-          </p>
-          <Link
-            href="/login"
-            className="inline-block bg-yellow-500 text-black px-10 py-4 rounded-full font-bold text-lg hover:bg-yellow-400 transition shadow-xl shadow-yellow-500/20"
-          >
-            Start Free
-          </Link>
-          <p className="text-xs text-gray-500 mt-4">No credit card required. Cancel anytime.</p>
-        </div>
-      </section>
-
-      {/* -------- FOOTER -------- */}
-      <footer className="border-t border-[#222230] px-4 md:px-6 py-8 text-center text-gray-600 text-sm">
-        <p>AapkaCoach © {new Date().getFullYear()} — Built for Indian bodies, by people who understand.</p>
-      </footer>
-    </div>
-  )
-}
-</file>
-
-<file path="supabase/functions/generate-plan/index.ts">
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-// ---------- CORS ----------
-const FRONTEND_ORIGIN = Deno.env.get("FRONTEND_ORIGIN") || "*";
-const corsHeaders = {
-  "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-// ---------- Supabase Admin Client ----------
-const supabaseAdmin = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-);
-
-// ---------- Helpers ----------
-function sanitizeField(val: unknown): string {
-  if (val == null) return "Not specified";
-  return String(val).replace(/[\r\n`]/g, " ").slice(0, 200);
-}
-
-function safeNum(val: unknown, fallback = 0): number {
-  const n = Number(val);
-  return isFinite(n) ? n : fallback;
-}
-
-async function hashTokenDeno(token: string) {
-  const enc = new TextEncoder().encode(token);
-  const digest = await crypto.subtle.digest("SHA-256", enc);
-  const hashArray = Array.from(new Uint8Array(digest));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function validatePlan(p: any): boolean {
-  if (!p || typeof p !== "object") return false;
-  const dm = p.daily_macros;
-  if (!dm || typeof dm !== "object") return false;
-  const requiredMacros = ["calories", "protein_g", "carbs_g", "fat_g"];
-  for (const k of requiredMacros) {
-    if (typeof dm[k] !== "number" || !isFinite(dm[k])) return false;
-  }
-
-  if (!Array.isArray(p.weekly_meals) || p.weekly_meals.length < 6) return false;
-
-  // Each day and meal must have required fields
-  for (const day of p.weekly_meals) {
-    if (!day || typeof day !== "object") return false;
-    if (!Array.isArray(day.meals) || day.meals.length === 0) return false;
-    for (const meal of day.meals) {
-      if (!meal || typeof meal !== "object") return false;
-      const mealFields = ["kcal", "protein_g", "carbs_g", "fat_g"];
-      for (const f of mealFields) {
-        if (typeof meal[f] !== "number" || !isFinite(meal[f])) return false;
-      }
-      if (!Array.isArray(meal.foods) || meal.foods.length === 0) return false;
-      for (const food of meal.foods) {
-        const foodFields = ["protein_g", "carbs_g", "fat_g", "kcal"];
-        for (const ff of foodFields) {
-          if (typeof food[ff] !== "number" || !isFinite(food[ff])) return false;
-        }
-      }
-    }
-  }
-
-  // NOTE: Removed strict per-day macro sum cross-check.
-  // The AI targets daily_macros as an average — individual days legitimately
-  // vary ±100–200 kcal. The strict ±60 kcal tolerance was rejecting valid plans.
-
-  return true;
-}
-
-function buildPrompt(
-  profile: any,
-  previousPlans: any[],
-  notes: string,
-  nextWeek: number,
-  foodType: string
-): string {
-  const goal = sanitizeField(profile.primary_goal);
-  const diet = sanitizeField(profile.dietary_pattern);
-  const timing = sanitizeField(profile.meal_timing);
-  const supplements = sanitizeField(profile.supplements);
-  const persistentNotes = sanitizeField(profile.plan_notes);
-  const ft = (foodType || "indian").toLowerCase();
-
-  let foodTypeBlock = "";
-  if (ft === "indian") {
-    foodTypeBlock =
-      "\nFOOD TYPE: Indian. Prefer authentic Indian foods and local names (roti, dal, chawal, sabzi, paneer, dahi, sattu, idli, dosa, paratha, chana, rajma, chicken curry). Prioritise familiar Indian preparations and use Indian portion sizes and cost estimates.\n";
-  } else if (ft === "english" || ft === "western") {
-    foodTypeBlock =
-      "\nFOOD TYPE: English/Western. Prefer western-style foods (bread, porridge/oats, sandwiches, baked chicken, salads, potatoes, pasta, yogurt, cottage cheese) and use appropriate portioning and ingredient names.\n";
-  } else if (ft === "mixed" || ft === "both") {
-    foodTypeBlock =
-      "\nFOOD TYPE: Mixed. Blend Indian and Western foods across the week — pick the most suitable items for variety and adherence.\n";
-  } else {
-    foodTypeBlock = `\nFOOD TYPE: ${sanitizeField(
-      foodType
-    )}. Use appropriate local foods.`;
-  }
-
-  let previousBlock = "";
-  if (Array.isArray(previousPlans) && previousPlans.length > 0) {
-    previousBlock = "\nPREVIOUS WEEKLY PLANS:\n";
-    previousPlans.forEach((prev) => {
-      const week = prev.plan_week ?? "1";
-      const macros = prev.plan_json?.daily_macros || {};
-      previousBlock += `- Week ${week}: ${safeNum(macros.calories)} kcal, ${safeNum(
-        macros.protein_g
-      )}g protein, ${safeNum(macros.carbs_g)}g carbs, ${safeNum(macros.fat_g)}g fat.`;
-      if (prev.plan_json?.workout_plan?.split) {
-        previousBlock += ` Workout: ${sanitizeField(
-          prev.plan_json.workout_plan.split
-        )}.`;
-      }
-      if (prev.plan_json?.lifestyle_rules?.refeed_day) {
-        previousBlock += ` Refeed: ${sanitizeField(
-          prev.plan_json.lifestyle_rules.refeed_day
-        )}.`;
-      }
-      previousBlock += "\n";
-    });
-    previousBlock +=
-      "\nUse this history to improve continuity, preserve what worked, and adjust the next week based on user feedback.";
-  }
-
-  let feedbackBlock = "";
-  if (notes) {
-    feedbackBlock += `\nUSER NOTES FOR WEEK ${nextWeek}: ${sanitizeField(notes)}\n`;
-  }
-  if (persistentNotes) {
-    feedbackBlock += `\nUSER PERSISTENT NOTES: ${persistentNotes}\n`;
-  }
-
-  let supplementBlock = "";
-  if (supplements) {
-    supplementBlock = `\nSUPPLEMENTS: ${supplements}. Include these while choosing protein sources and recovery meals.\n`;
-  }
-
-  return `Generate a complete, highly personalised 7-day diet and training plan for Week ${nextWeek}. Return ONLY valid JSON — no markdown, no extra text.
-
-USER PROFILE:
-- Name: ${sanitizeField(profile.name)}
-- Age: ${safeNum(profile.age)}, Sex: ${sanitizeField(profile.sex)}
-- Height: ${safeNum(profile.height_cm)} cm, Weight: ${safeNum(profile.weight_kg)} kg
-- Body Fat: ${safeNum(profile.body_fat_percent)}%, Visceral Fat: ${safeNum(profile.visceral_fat)}
-- Waist: ${safeNum(profile.waist_inches)}", Upper Abdomen: ${safeNum(profile.upper_abdomen_inches)}", Hips: ${safeNum(profile.hips_inches)}"
-- Body Age: ${safeNum(profile.body_age)}, RMR: ${safeNum(profile.rmr_estimated)} kcal
-- Dietary pattern: ${diet}, Meal timing: ${timing}
-- Eating environment: ${sanitizeField(profile.eating_environment)}, Budget: ₹${safeNum(profile.daily_budget, 200)}/day
-- Activity: ${sanitizeField(profile.activity_level)}, Sleep: ${safeNum(profile.sleep_hours, 7)}h, Stress: ${safeNum(profile.stress_level, 5)}/10
-- Goal: ${goal}, Target BF%: ${safeNum(profile.target_bf_percent)}, Timeframe: ${safeNum(profile.timeframe_weeks)} weeks
-${supplementBlock}${previousBlock}${feedbackBlock}
-CALCULATION STEPS (show the result in the JSON):
-1. BMR via Mifflin-St Jeor. Apply activity multiplier for TDEE.
-2. Adjust for goal: fat_loss = -400 kcal, muscle_gain = +250 kcal, recomp = -100 kcal.
-3. Protein = 2.0 g/kg body weight. Fat = 0.9 g/kg. Carbs fill the rest.
-4. If meal_timing is "16_8" apply intermittent fasting (eating window 12 PM – 8 PM, no breakfast).
-5. Every day must be DIFFERENT — rotate foods, vary protein sources across the week.
-6. Use real Indian foods with accurate macros: dal, chawal, roti, sabzi, paneer, eggs, sattu, dahi, chicken, fish, soy chunks, oats, fruits, nuts.
-7. Each meal's macros must sum up correctly to daily totals.
-8. Daily cost must stay within budget.
-9. Workout split tailored to goal: recomp = Upper/Lower 4x/week, fat_loss = PPL 5x/week, muscle_gain = Push/Pull/Legs 5x/week.
-
-RULES FOR EVERY FOOD ITEM (do NOT skip any field):
-{ "name": "Boiled Eggs", "quantity": "4 whole", "protein_g": 24, "carbs_g": 2, "fat_g": 20, "kcal": 280, "cost_inr": 24 }
-
-OUTPUT JSON STRUCTURE (follow exactly):
-{
-  "daily_macros": { "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0 },
-  "weekly_meals": [
-    {
-      "day": "Monday",
-      "type": "standard",
-      "meals": [
-        {
-          "time": "12:00 PM",
-          "name": "Meal name",
-          "kcal": 0,
-          "protein_g": 0,
-          "carbs_g": 0,
-          "fat_g": 0,
-          "foods": [
-            { "name": "Food item", "quantity": "amount + unit", "protein_g": 0, "carbs_g": 0, "fat_g": 0, "kcal": 0, "cost_inr": 0 }
-          ],
-          "tip": "Why this meal helps"
-        }
-      ]
-    }
-  ],
-  "workout_plan": {
-    "days_per_week": 4,
-    "split": "Upper/Lower Split",
-    "sessions": [
-      {
-        "name": "Session name",
-        "exercises": [
-          { "name": "Exercise", "sets": "4", "reps": "8-10", "tip": "Form cue" }
-        ]
-      }
-    ],
-    "cardio": "Description"
-  },
-  "lifestyle_rules": {
-    "sleep_hours": 8,
-    "water_litres": 3.5,
-    "steps_daily": 10000,
-    "stress_tips": ["tip1", "tip2"],
-    "refeed_day": "Description",
-    "avoid_list": ["item1", "item2"]
-  }
-}`;
-}
-
-// ---------- Main handler ----------
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  try {
-    // ----- AUTH: validate custom session token -----
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const token = authHeader.replace("Bearer ", "").trim();
-    const tokenHash = await hashTokenDeno(token);
-
-    // Look up the token in the custom sessions table by hash
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from("sessions")
-      .select("user_id")
-      .eq("token_hash", tokenHash)
-      .gt("expires_at", new Date().toISOString())
-      .maybeSingle();
-
-    if (sessionError || !session) {
-      return new Response(
-        JSON.stringify({ error: "Invalid or expired session" }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const userId = session.user_id;
-
-    // ----- FETCH PROFILE -----
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .single();
-
-    if (profileError || !profile) {
-      return new Response(
-        JSON.stringify({ error: "Profile not found. Complete onboarding first." }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const requestBody = await req.json().catch(() => ({}));
-    const notes = typeof requestBody.notes === "string" ? requestBody.notes : "";
-    const requestedFoodType =
-      typeof requestBody.food_type === "string"
-        ? requestBody.food_type.trim().toLowerCase()
-        : "";
-
-    const { data: previousPlans } = await supabaseAdmin
-      .from("meal_plans")
-      .select("plan_week, plan_json")
-      .eq("user_id", userId)
-      .order("plan_week", { ascending: true });
-
-    const nextWeek = Array.isArray(previousPlans) ? previousPlans.length + 1 : 1;
-    const foodType = requestedFoodType || profile.food_type || "indian";
-
-    // ----- CALL DEEPSEEK -----
-    const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
-    if (!deepseekKey) {
-      return new Response(
-        JSON.stringify({ error: "AI not configured on server." }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 50_000);
-
-    let planData: any = null;
-
-    try {
-      const aiRes = await fetch("https://api.deepseek.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${deepseekKey}`,
-        },
-        body: JSON.stringify({
-          model: "deepseek-chat",
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a world-class sports nutritionist AI who specialises in Indian dietary patterns. Always respond with valid JSON only — no markdown, no extra text, no code fences.",
-            },
-            {
-              role: "user",
-              content: buildPrompt(
-                profile,
-                previousPlans ?? [],
-                notes,
-                nextWeek,
-                foodType
-              ),
-            },
-          ],
-          temperature: 0.4,
-          max_tokens: 8000,
-          response_format: { type: "json_object" },
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (!aiRes.ok) {
-        const errText = await aiRes.text();
-        console.error("DeepSeek API error:", aiRes.status, errText);
-        return new Response(
-          JSON.stringify({ error: `AI returned status ${aiRes.status}` }),
-          {
-            status: 502,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      const result = await aiRes.json();
-
-      if (result.choices?.[0]?.finish_reason === "length") {
-        return new Response(
-          JSON.stringify({ error: "AI response truncated. Please try again." }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      const aiJson = result.choices?.[0]?.message?.content;
-      if (!aiJson) {
-        return new Response(JSON.stringify({ error: "Empty AI response" }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const parsed = JSON.parse(aiJson);
-      planData = parsed.plan ?? parsed;
-    } catch (e: any) {
-      clearTimeout(timeout);
-      if (e.name === "AbortError") {
-        return new Response(
-          JSON.stringify({ error: "AI request timed out. Please try again." }),
-          {
-            status: 504,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-      console.error("DeepSeek fetch error:", e);
-      return new Response(JSON.stringify({ error: "AI request failed" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // ----- VALIDATE PLAN -----
-    if (!validatePlan(planData)) {
-      console.error(
-        "Plan validation failed. Received:",
-        JSON.stringify(planData).slice(0, 500)
-      );
-      return new Response(
-        JSON.stringify({
-          error: "AI returned an incomplete plan. Please try again.",
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // ----- SAVE TO meal_plans TABLE -----
-    const { error: insertError } = await supabaseAdmin.from("meal_plans").insert({
-      user_id: userId,
-      plan_week: nextWeek,
-      plan_json: planData,
-      generated_at: new Date().toISOString(),
-    });
-
-    if (insertError) {
-      console.error("Save plan error:", insertError);
-      return new Response(
-        JSON.stringify({ error: "Failed to save plan to database." }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // ----- MARK ONBOARDING COMPLETE -----
-    await supabaseAdmin
-      .from("users")
-      .update({ onboarding_completed: true })
-      .eq("id", userId);
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        plan: { ...planData, plan_week: nextWeek },
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  } catch (err) {
-    console.error(
-      "Unhandled edge function error:",
-      err instanceof Error ? err.message : String(err)
-    );
-    return new Response(JSON.stringify({ error: "Internal server error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-});
-</file>
-
-<file path=".gitignore">
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# Next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Vercel
-.vercel
-
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
-</file>
-
-<file path="package.json">
-{
-  "name": "aapkacoach",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "@supabase/ssr": "^0.12.0",
-    "@supabase/supabase-js": "^2.108.0",
-    "jose": "^6.2.3",
-    "next": "16.2.7",
-    "nodemailer": "^6.9.13",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "recharts": "^3.8.1"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/nodemailer": "^6.4.16",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.7",
-    "tailwindcss": "^4",
-    "typescript": "^5"
-  }
-}
-</file>
-
-<file path="tsconfig.json">
-{
-  "compilerOptions": {
-    "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "react-jsx",
-    "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "paths": {
-      "@/*": ["./*"]
-    }
-  },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
-  ],
-  "exclude": ["node_modules", "supabase"]
-}
-</file>
-
-<file path="app/api/meal-plan/route.ts">
-import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { supabaseAdmin } from '@/lib/supabase'
-import { hashToken } from '@/lib/otp'
-
-// Edge function URL
-const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
-
-// ─────────────────────────────────────────────
-// GET  /api/meal-plan  — fetch the latest saved plan
-// ─────────────────────────────────────────────
-export async function GET() {
-  try {
-    const cookieStore = await cookies()
-    const authToken = cookieStore.get('auth-token')?.value
-
-    if (!authToken) {
-      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
-    }
-
-    const tokenHash = hashToken(authToken)
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select('user_id')
-      .eq('token_hash', tokenHash)
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle()
-
-    if (sessionError || !session) {
-      const res = NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
-      res.cookies.delete('auth-token')
-      return res
-    }
-
-    const { data: planRow, error: planError } = await supabaseAdmin
-      .from('meal_plans')
-      .select('plan_json, generated_at')
-      .eq('user_id', session.user_id)
-      .order('generated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (planError) {
-      console.error('Plan fetch error:', planError)
-      return NextResponse.json({ error: 'Failed to fetch plan' }, { status: 500 })
-    }
-
-    if (!planRow) return NextResponse.json({ plan: null })
-
-    const planJson = planRow.plan_json || {}
-    const planWeek = planJson.plan_week ?? null
-    return NextResponse.json({ plan: { ...planJson, plan_week: planWeek, generated_at: planRow.generated_at } })
-  } catch (error) {
-    console.error('GET /api/meal-plan error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-// ─────────────────────────────────────────────
-// POST /api/meal-plan  — generate a new plan via Edge Function
-// ─────────────────────────────────────────────
-export async function POST(req: Request) {
-  try {
-    const cookieStore = await cookies()
-    const authToken = cookieStore.get('auth-token')?.value
-
-    if (!authToken) {
-      return NextResponse.json({ error: 'Not logged in' }, { status: 401 })
-    }
-
-    const tokenHash = hashToken(authToken)
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select('user_id')
-      .eq('token_hash', tokenHash)
-      .gt('expires_at', new Date().toISOString())
-      .maybeSingle()
-
-    if (sessionError || !session) {
-      const res = NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
-      res.cookies.delete('auth-token')
-      return res
-    }
-
-    const body = await req.json().catch(() => ({}))
-    const notes = typeof body.notes === 'string' ? body.notes.trim() : ''
-    const requestedFoodType = typeof body.food_type === 'string' ? body.food_type.trim().toLowerCase() : ''
-
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .select('paid_weeks, food_type')
-      .eq('user_id', session.user_id)
-      .single()
-
-    if (profileError || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
-    }
-
-    const { count, error: countError } = await supabaseAdmin
-      .from('meal_plans')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', session.user_id)
-
-    if (countError) {
-      console.error('Plan count error:', countError)
-      return NextResponse.json({ error: 'Unable to check current plan status' }, { status: 500 })
-    }
-
-    const planCount = typeof count === 'number' ? count : 0
-    const nextWeek = planCount + 1
-
-    if (planCount > 0 && nextWeek > (profile.paid_weeks || 1)) {
-      return NextResponse.json({
-        error: `Week ${nextWeek} is locked. Buy week ${nextWeek} to continue your subscription.`,
-      }, { status: 402 })
-    }
-
-    const foodType = requestedFoodType || (profile && profile.food_type) || 'indian'
-
-    // ── Call the Supabase Edge Function ──
-    const edgeRes = await fetch(EDGE_FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-        'Authorization': `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({ user_id: session.user_id, notes, food_type: foodType }),
-    })
-
-    const edgeData = await edgeRes.json()
-
-    if (!edgeRes.ok) {
-      console.error('Edge function error:', edgeRes.status, edgeData)
-      // TEMPORARY – show the real error in the browser
-      return NextResponse.json(
-        { error: edgeData?.error || 'Plan generation failed', details: edgeData },
-        { status: edgeRes.status }
-      )
-    }
-
-    return NextResponse.json({ success: true, plan: edgeData.plan })
-  } catch (error) {
-    console.error('POST /api/meal-plan error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-</file>
-
 <file path="app/dashboard/profile/page.tsx">
 'use client'
 
@@ -4661,7 +4673,7 @@ export default function ProfileEditPage() {
 
       if (regenerate) {
         // FIX: use /api/generate-plan (same as onboarding), not /api/meal-plan
-        const regenRes = await fetch('/api/generate-plan', {
+        const regenRes = await fetch('/api/meal-plan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4987,570 +4999,6 @@ export default function ProfileEditPage() {
 }
 </file>
 
-<file path="app/dashboard/page.tsx">
-'use client'
-
-import { useRouter } from 'next/navigation'
-import { useEffect, useState, useCallback } from 'react'
-
-// -------------------- Types --------------------
-interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
-
-// -------------------- Meal Card --------------------
-function MealCard({
-  meal, mealIndex, today, todayLogs, onToggle,
-}: {
-  meal: any; mealIndex: number; today: string; todayLogs: FoodLog[]; onToggle: (idx: number, name: string, eaten: boolean) => void
-}) {
-  const log = todayLogs.find(l => l.meal_index === mealIndex)
-  const eaten = log?.eaten ?? false
-
-  return (
-    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${
-      eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'
-    }`}>
-      <div className="flex justify-between items-start mb-4">
-        <div className="flex-1">
-          <span className="text-xs text-[#6b6b7e] uppercase tracking-[2px] font-mono bg-[#222230] px-2.5 py-1 rounded">
-            {meal.time}
-          </span>
-          <h3 className={`text-xl font-bold mt-2 ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
-        </div>
-        <div className="flex items-center gap-3 ml-4">
-          <div className="text-right">
-            <span className="text-3xl font-extrabold text-yellow-500">{meal.kcal}</span>
-            <span className="text-sm text-gray-500"> kcal</span>
-            <p className="text-xs text-green-400 font-mono mt-1">{meal.protein_g}g protein</p>
-          </div>
-          <button
-            onClick={() => onToggle(mealIndex, meal.name, !eaten)}
-            title={eaten ? 'Mark as not eaten' : 'Mark as eaten'}
-            className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${
-              eaten
-                ? 'bg-green-500/20 border-green-500 text-green-400 scale-105'
-                : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'
-            }`}
-          >
-            {eaten ? '✓' : '○'}
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        {meal.foods?.map((food: any, j: number) => (
-          <div key={j} className="flex justify-between py-2.5 border-t border-[#222230]/75 text-sm items-center">
-            <span className="text-gray-200">
-              {food.name}{' '}
-              {food.quantity && <span className="text-gray-500 text-xs ml-1">({food.quantity})</span>}
-              <span className="inline-flex gap-1.5 ml-3">
-                {food.protein_g != null && <span className="text-[9px] font-mono bg-green-400/10 text-green-400 px-1.5 py-0.5 rounded">P {food.protein_g}g</span>}
-                {food.carbs_g != null && <span className="text-[9px] font-mono bg-blue-400/10 text-blue-400 px-1.5 py-0.5 rounded">C {food.carbs_g}g</span>}
-                {food.fat_g != null && <span className="text-[9px] font-mono bg-yellow-500/10 text-yellow-400 px-1.5 py-0.5 rounded">F {food.fat_g}g</span>}
-              </span>
-            </span>
-            <span className="text-gray-400 font-mono text-xs">{food.cost_inr != null ? `₹${food.cost_inr}` : ''}</span>
-          </div>
-        ))}
-      </div>
-
-      {meal.tip && (
-        <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">
-          💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// -------------------- Adherence Ring --------------------
-function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number; streak: number }) {
-  const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
-  const r = 28
-  const circ = 2 * Math.PI * r
-  const offset = circ - (pct / 100) * circ
-  return (
-    <div className="flex items-center gap-3 bg-[#17171f] border border-[#222230] rounded-xl px-4 py-2.5">
-      <div className="relative w-14 h-14">
-        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
-          <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
-          <circle
-            cx="35" cy="35" r={r}
-            stroke={pct === 100 ? '#3dd68c' : pct >= 50 ? '#f4a623' : '#60a5fa'}
-            strokeWidth="6" fill="none"
-            strokeDasharray={circ}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
-          />
-        </svg>
-        <span className="absolute inset-0 flex items-center justify-center text-xs font-extrabold font-mono text-white">{pct}%</span>
-      </div>
-      <div>
-        <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">Today's Adherence</p>
-        <p className="text-sm font-bold text-white">{eaten}/{total} meals eaten</p>
-        {streak > 0 && (
-          <p className="text-xs text-orange-400 font-mono mt-0.5">🔥 {streak} day streak</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// -------------------- Macro Progress Rings --------------------
-function MacroRing({ label, consumed, target, color, unit = 'g' }: {
-  label: string; consumed: number; target: number; color: string; unit?: string
-}) {
-  const pct = target > 0 ? Math.min(100, Math.round((consumed / target) * 100)) : 0
-  const r = 32
-  const circ = 2 * Math.PI * r
-  const offset = circ - (pct / 100) * circ
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="relative w-20 h-20">
-        <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-          <circle cx="40" cy="40" r={r} stroke="#222230" strokeWidth="7" fill="none" />
-          <circle cx="40" cy="40" r={r} stroke={color} strokeWidth="7" fill="none"
-            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
-            style={{ transition: 'stroke-dashoffset 0.7s cubic-bezier(0.4,0,0.2,1)' }} />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-sm font-extrabold text-white font-mono">{pct}%</span>
-        </div>
-      </div>
-      <div className="text-center">
-        <p className="text-xs font-bold font-mono" style={{ color }}>{consumed}{unit}</p>
-        <p className="text-[10px] text-gray-500 uppercase tracking-wider font-mono">{label}</p>
-        <p className="text-[9px] text-gray-600 font-mono">/ {target}{unit}</p>
-      </div>
-    </div>
-  )
-}
-
-function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
-  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
-  const days = plan?.weekly_meals || []
-  const todayDay = days.find((d: any) => d.day?.toLowerCase() === todayDayName.toLowerCase())
-  const meals = todayDay?.meals || []
-
-  let consumedP = 0, consumedC = 0, consumedF = 0
-  meals.forEach((meal: any, i: number) => {
-    const log = todayLogs.find(l => l.meal_index === i)
-    if (log?.eaten) {
-      meal.foods?.forEach((food: any) => {
-        consumedP += food.protein_g || 0
-        consumedC += food.carbs_g || 0
-        consumedF += food.fat_g || 0
-      })
-    }
-  })
-
-  const targets = plan?.daily_macros || {}
-
-  return (
-    <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 mb-6">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Today's Macro Progress</p>
-          <p className="text-sm text-gray-400 mt-0.5">Tap ✓ on meals below to update</p>
-        </div>
-        <span className="text-xs text-gray-600 font-mono">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
-      </div>
-      <div className="flex justify-around">
-        <MacroRing label="Protein" consumed={Math.round(consumedP)} target={targets.protein_g || 0} color="#3dd68c" />
-        <MacroRing label="Carbs" consumed={Math.round(consumedC)} target={targets.carbs_g || 0} color="#60a5fa" />
-        <MacroRing label="Fat" consumed={Math.round(consumedF)} target={targets.fat_g || 0} color="#f4a623" />
-      </div>
-    </div>
-  )
-}
-
-// -------------------- Generating Screen --------------------
-const STEPS = [
-  { icon: '⚖️', label: 'Reading your body metrics…' },
-  { icon: '🔥', label: 'Calculating BMR & TDEE via Mifflin-St Jeor…' },
-  { icon: '🥩', label: 'Setting protein at 2.0 g / kg body weight…' },
-  { icon: '🧮', label: 'Splitting macros — carbs & fats…' },
-  { icon: '🍱', label: 'Building 7-day Indian meal rotation…' },
-  { icon: '🏋️', label: 'Designing your workout split…' },
-  { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
-]
-
-function GeneratingScreen() {
-  const [stepIdx, setStepIdx] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setStepIdx(i => (i + 1) % STEPS.length), 3500)
-    return () => clearInterval(t)
-  }, [])
-  const s = STEPS[stepIdx]
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex flex-col items-center justify-center gap-6 px-6">
-      <div className="text-6xl animate-pulse">{s.icon}</div>
-      <div className="text-center max-w-sm">
-        <p className="text-xl font-bold font-mono text-white">{s.label}</p>
-        <p className="text-sm text-gray-500 mt-2">Your AI plan is being generated…</p>
-      </div>
-      <div className="w-full max-w-xs space-y-2 mt-4">
-        {STEPS.map((step, i) => (
-          <div key={i} className={`flex items-center gap-2 text-xs font-mono transition-all ${i === stepIdx ? 'text-yellow-400' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
-            <span>{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
-            <span>{step.label}</span>
-          </div>
-        ))}
-      </div>
-      <div className="w-full bg-[#17171f] rounded-full h-1.5 border border-[#222230]">
-        <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
-      </div>
-      <p className="text-center text-xs text-gray-500 font-mono mt-3">This takes 15–40 seconds. Please don't close this tab.</p>
-    </div>
-  )
-}
-
-// -------------------- Main Dashboard --------------------
-export default function DashboardPage() {
-  const router = useRouter()
-  const today = new Date().toISOString().split('T')[0]
-  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
-
-  const [plan, setPlan] = useState<any>(null)
-  const [profile, setProfile] = useState<any>(null)
-  const [planFeedback, setPlanFeedback] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
-  const [buying, setBuying] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [userName, setUserName] = useState('Athlete')
-
-  // Plan timing data
-  const planWeek = plan?.plan_week ?? 1
-  const planStartDate = plan?.generated_at ? new Date(plan.generated_at) : null
-  const planDayIndex = planStartDate
-    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
-    : 1
-  const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
-  const nextWeek = planWeek + 1
-  const hasSubscriptionForNextWeek = profile?.paid_weeks >= nextWeek
-
-  // Food log state
-  const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
-  const [streak, setStreak] = useState(0)
-
-  // FIX: derive today's meals in the main component so MealCard can be rendered
-  const todayMeals: any[] = (() => {
-    const days = plan?.weekly_meals || []
-    const todayDay = days.find((d: any) => d.day?.toLowerCase() === todayDayName.toLowerCase())
-    return todayDay?.meals || []
-  })()
-
-  const eatenCount = todayMeals.filter((_: any, i: number) =>
-    todayLogs.find(l => l.meal_index === i)?.eaten
-  ).length
-
-  useEffect(() => { loadPlan() }, [])
-  useEffect(() => { if (plan) loadFoodLog() }, [plan])
-
-  const loadPlan = async () => {
-    setLoading(true); setError(null)
-    try {
-      const res = await fetch('/api/me')
-      if (!res.ok) { router.push('/login'); return }
-      const { user } = await res.json()
-      setUserName(user?.profile?.name || user?.email || 'Athlete')
-      setProfile(user?.profile || null)
-
-      const planRes = await fetch('/api/meal-plan')
-      if (planRes.ok) {
-        const data = await planRes.json()
-        setPlan(data.plan || null)
-      } else { setPlan(null) }
-    } catch { setError('Failed to load your plan') }
-    finally { setLoading(false) }
-  }
-
-  const loadFoodLog = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/food-log?date=${today}`)
-      if (res.ok) {
-        const data = await res.json()
-        setTodayLogs(data.logs || [])
-        setStreak(data.streak || 0)
-      }
-    } catch { /* silent */ }
-  }, [today])
-
-  const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
-    setTodayLogs(prev => {
-      const existing = prev.find(l => l.meal_index === mealIndex)
-      if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
-      return [...prev, { plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }]
-    })
-    try {
-      await fetch('/api/food-log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }),
-      })
-      const res = await fetch(`/api/food-log?date=${today}`)
-      if (res.ok) { const d = await res.json(); setStreak(d.streak || 0) }
-    } catch { /* silent */ }
-  }
-
-  const generateNextWeek = async () => {
-    setGenerating(true); setError(null)
-    try {
-      const res = await fetch('/api/generate-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: planFeedback.trim() }),
-      })
-      const data = await res.json().catch(() => null)
-      if (!res.ok || !data) {
-        setError(data?.error || 'Failed to generate next week')
-      } else if (data.success) {
-        setPlan(data.plan)
-        setPlanFeedback('')
-      } else {
-        setError(data.error || 'Failed to generate next week')
-      }
-    } catch {
-      setError('Failed to generate next week')
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  const buyNextWeek = async () => {
-    setBuying(true); setError(null)
-    try {
-      const res = await fetch('/api/subscription', { method: 'POST' })
-      if (!res.ok) {
-        const d = await res.json()
-        setError(d.error || 'Failed to buy subscription week')
-      } else {
-        await loadPlan()
-      }
-    } catch {
-      setError('Failed to purchase week')
-    } finally {
-      setBuying(false)
-    }
-  }
-
-  const handleLogout = async () => {
-    try { await fetch('/api/logout', { method: 'POST' }) } catch {}
-    router.push('/login')
-  }
-
-  // ---------- RENDER STATES ----------
-  if (loading) return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
-      Loading AapkaCoach profile...
-    </div>
-  )
-
-  // FIX: generating no longer replaces the whole page — it only disables the button
-  // The GeneratingScreen is kept for the "no plan yet" first-time generation flow only
-
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
-        <h1 className="text-2xl font-extrabold tracking-tight cursor-pointer" onClick={() => router.push('/dashboard')}>
-          Aapka<span className="text-yellow-500">Coach</span>
-        </h1>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button onClick={() => router.push('/dashboard/plans')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            📥 All Plans
-          </button>
-          <button onClick={() => router.push('/dashboard/subscriptions')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            💳 Subscribe
-          </button>
-          <button onClick={() => router.push('/dashboard/progress')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            📊 Progress
-          </button>
-          <button onClick={() => router.push('/dashboard/history')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            📋 History
-          </button>
-          <button onClick={() => router.push('/dashboard/profile')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            👤 Profile
-          </button>
-          <span className="text-xs text-gray-400 font-mono hidden md:inline bg-[#17171f] px-3 py-2 rounded-full border border-[#222230]">{userName}</span>
-          <button onClick={handleLogout}
-            className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">
-            Logout
-          </button>
-        </div>
-      </header>
-
-      {/* Main */}
-      <main className="max-w-4xl mx-auto px-4 md:px-6 pt-6 pb-16">
-
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4 text-red-400 text-sm font-mono">
-            {error}
-          </div>
-        )}
-
-        {!plan ? (
-          /* ── No plan yet ── */
-          generating ? (
-            <GeneratingScreen />
-          ) : (
-            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
-              <div className="text-5xl mb-4">📋</div>
-              <h2 className="text-2xl font-bold mb-3 text-white">No Active Plan Found</h2>
-              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-                We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.
-              </p>
-              <button
-                onClick={() => generateNextWeek()}
-                disabled={generating}
-                className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50"
-              >
-                {generating ? 'Generating…' : 'Generate My AI Plan 🤖'}
-              </button>
-            </div>
-          )
-        ) : (
-          <div>
-            {/* ── Plan meta + subscription bar ── */}
-            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-4 mb-4 flex flex-col gap-4">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                  <p className="text-xs text-gray-400 uppercase tracking-wider font-mono">Daily Target</p>
-                  <p className="text-2xl font-extrabold text-white mt-0.5">
-                    {plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span>
-                  </p>
-                </div>
-                <div className="text-right text-xs font-mono text-gray-500">
-                  <p>{plan.daily_macros?.protein_g}g protein</p>
-                  <p>{plan.daily_macros?.carbs_g}g carbs · {plan.daily_macros?.fat_g}g fat</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Week</p>
-                  <p className="text-lg font-bold text-white mt-1">Week {planWeek}</p>
-                </div>
-                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Day Progress</p>
-                  <p className="text-lg font-bold text-white mt-1">Day {planDayIndex} of 7</p>
-                </div>
-                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Days Left</p>
-                  <p className="text-lg font-bold text-white mt-1">{daysLeft} days</p>
-                </div>
-              </div>
-
-              {planStartDate && (
-                <div className="bg-[#0f0f15] rounded-2xl p-4 border border-[#222230]">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide font-mono">Plan Generated On</p>
-                  <p className="text-lg font-bold text-white mt-1">
-                    {planStartDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-                  </p>
-                </div>
-              )}
-
-              <div className="bg-[#0a0a10] rounded-2xl border border-[#222230] p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="font-semibold text-white">Subscription: <span className="text-yellow-400 font-mono">{profile?.paid_weeks ?? 1} week{(profile?.paid_weeks ?? 1) !== 1 ? 's' : ''}</span></p>
-                  <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs px-2 py-1 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 rounded hover:bg-yellow-500/20">Manage</button>
-                </div>
-                <div className="w-full bg-[#1a1a24] rounded-full h-2 overflow-hidden">
-                  <div className="bg-gradient-to-r from-green-500 to-yellow-500 h-full" style={{ width: '100%' }}></div>
-                </div>
-                {!hasSubscriptionForNextWeek && (
-                  <p className="text-yellow-300 text-xs mt-2">🔒 Buy week {nextWeek} to unlock continuous improvement</p>
-                )}
-                {hasSubscriptionForNextWeek && profile?.paid_weeks > planWeek && (
-                  <p className="text-green-300 text-xs mt-2">✓ Week {nextWeek} unlocked. Generate when ready.</p>
-                )}
-              </div>
-            </div>
-
-            {/* ── Adherence Ring ── */}
-            <div className="mb-4">
-              <AdherenceRing
-                eaten={eatenCount}
-                total={todayMeals.length}
-                streak={streak}
-              />
-            </div>
-
-            {/* ── Macro Progress Rings ── */}
-            <MacroRings plan={plan} todayLogs={todayLogs} />
-
-            {/* ── TODAY'S MEALS — FIX: was never rendered ── */}
-            {todayMeals.length > 0 && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-lg font-bold text-white">
-                    Today's Meals
-                    <span className="text-xs text-gray-500 font-normal font-mono ml-2">({todayDayName})</span>
-                  </h2>
-                  <span className="text-xs text-gray-500 font-mono">{eatenCount}/{todayMeals.length} eaten</span>
-                </div>
-                {todayMeals.map((meal: any, i: number) => (
-                  <MealCard
-                    key={i}
-                    meal={meal}
-                    mealIndex={i}
-                    today={today}
-                    todayLogs={todayLogs}
-                    onToggle={toggleMealEaten}
-                  />
-                ))}
-              </div>
-            )}
-
-            {todayMeals.length === 0 && (
-              <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-2xl p-6 text-center mb-6">
-                <p className="text-gray-500 text-sm font-mono">No meals found for {todayDayName} in this plan.</p>
-                <p className="text-gray-600 text-xs mt-1">Check the full week plan below.</p>
-              </div>
-            )}
-
-            {/* ── Link to full week plan ── */}
-            <button
-              onClick={() => router.push('/dashboard/week')}
-              className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg mb-4"
-            >
-              View Full Week Plan → (Diet · Workout · Lifestyle)
-            </button>
-
-            {/* ── Generate next week (if subscription allows) ── */}
-            {hasSubscriptionForNextWeek && (
-              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
-                <h3 className="font-bold text-white mb-1">Generate Week {nextWeek}</h3>
-                <p className="text-xs text-gray-500 mb-3">Add optional notes before generating your next plan.</p>
-                <textarea
-                  value={planFeedback}
-                  onChange={e => setPlanFeedback(e.target.value)}
-                  placeholder="e.g. more variety, less rice, felt low energy on Thursday…"
-                  className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-sm resize-none min-h-[80px] focus:border-yellow-500 outline-none mb-3"
-                />
-                <button
-                  onClick={generateNextWeek}
-                  disabled={generating}
-                  className="w-full py-3 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50"
-                >
-                  {generating ? '🧠 Generating Week ' + nextWeek + '…' : '🚀 Generate Week ' + nextWeek}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-    </div>
-  )
-}
-</file>
-
 <file path="app/api/me/route.ts">
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -5722,6 +5170,428 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+</file>
+
+<file path="supabase/functions/generate-plan/index.ts">
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const FRONTEND_ORIGIN = Deno.env.get("FRONTEND_ORIGIN") || "*";
+const corsHeaders = {
+  "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const supabaseAdmin = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+);
+
+// ─────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────
+
+interface MacroTargets {
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  fiber_g: number;
+  tdee: number;
+  bmr: number;
+  deficit_surplus_kcal: number;
+  deficit_surplus_note: string;
+  weekly_weight_change_kg: number;
+}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+
+function safeNum(val: unknown, fallback = 0): number {
+  const n = Number(val);
+  return isFinite(n) && n > 0 ? n : fallback;
+}
+
+function sanitizeField(val: unknown): string {
+  if (val == null) return "Not specified";
+  return String(val).replace(/[\r\n`<>]/g, " ").trim().slice(0, 200);
+}
+
+async function hashTokenDeno(token: string): Promise<string> {
+  const enc = new TextEncoder().encode(token);
+  const digest = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function clamp(val: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, val));
+}
+
+// ─────────────────────────────────────────────
+// NUTRITION SCIENCE ENGINE (Aggressive Recomp)
+// ─────────────────────────────────────────────
+
+function calcMacros(profile: Record<string, unknown>): MacroTargets {
+  const weightKg = safeNum(profile.weight_kg, 70);
+  const heightCm = safeNum(profile.height_cm, 170);
+  const age = safeNum(profile.age, 25);
+  const sex = String(profile.sex || "male").toLowerCase();
+  const bodyFatPct = clamp(safeNum(profile.body_fat_percent, 20), 5, 55);
+  const activityLevel = String(profile.activity_level || "moderate").toLowerCase();
+  const goal = String(profile.primary_goal || "recomp").toLowerCase();
+
+  // Katch-McArdle BMR
+  const lbm = weightKg * (1 - bodyFatPct / 100);
+  const bmr = Math.round(370 + 21.6 * lbm);
+
+  const activityMap: [string, number][] = [
+    ["sedentary", 1.2], ["light", 1.375], ["moderate", 1.55], ["heavy", 1.725]
+  ];
+  let pal = 1.55;
+  for (const [key, val] of activityMap) {
+    if (activityLevel.includes(key)) { pal = val; break; }
+  }
+  const tdee = Math.round(bmr * pal);
+
+  let targetCalories: number;
+  let deficitSurplusKcal = 0;
+  let deficitSurplusNote: string;
+
+  const isFatLoss = goal.includes("fat") || goal.includes("loss");
+  const isMuscle = goal.includes("muscle") || goal.includes("bulk");
+
+  if (isFatLoss) {
+    targetCalories = Math.max(Math.round(tdee * 0.75), sex === "female" ? 1200 : 1500);
+    deficitSurplusKcal = -(tdee - targetCalories);
+    deficitSurplusNote = `Fat loss: Aggressive ${Math.abs(deficitSurplusKcal)} kcal deficit.`;
+  } else if (isMuscle) {
+    targetCalories = Math.round(tdee * 1.10);
+    deficitSurplusKcal = targetCalories - tdee;
+    deficitSurplusNote = `Lean bulk: ${deficitSurplusKcal} kcal surplus.`;
+  } else {
+    // RECOMPOSITION: 18% deficit if BF > 15%, otherwise 10% deficit
+    const deficitPct = (bodyFatPct >= 15 && sex === "male") || (bodyFatPct >= 22 && sex === "female") ? 0.18 : 0.10;
+    targetCalories = Math.max(Math.round(tdee * (1 - deficitPct)), sex === "female" ? 1300 : 1600);
+    deficitSurplusKcal = -(tdee - targetCalories);
+    deficitSurplusNote = `Recomposition: ${deficitPct * 100}% deficit (${Math.abs(deficitSurplusKcal)} kcal) to drop fat while preserving muscle.`;
+  }
+  
+  const weeklyWeightChangeKg = (deficitSurplusKcal * 7) / 7700;
+
+  // PROTEIN: 1.85g per kg for recomp
+  let proteinG = Math.round(weightKg * 1.85);
+  proteinG = clamp(proteinG, 100, 180);
+
+  // FAT: 1.1g per kg
+  const fatG = clamp(Math.round(weightKg * 1.1), 50, 95);
+
+  // CARBS: Remainder
+  const carbCals = targetCalories - (proteinG * 4) - (fatG * 9);
+  const carbsG = Math.max(Math.round(carbCals / 4), 60);
+
+  const fiberG = clamp(Math.round(carbsG * 0.14), 25, 40);
+  const actualCalories = (proteinG * 4) + (fatG * 9) + (carbsG * 4);
+
+  return {
+    calories: actualCalories,
+    protein_g: proteinG,
+    carbs_g: carbsG,
+    fat_g: fatG,
+    fiber_g: fiberG,
+    tdee,
+    bmr,
+    deficit_surplus_kcal: deficitSurplusKcal,
+    deficit_surplus_note: deficitSurplusNote,
+    weekly_weight_change_kg: Math.round(weeklyWeightChangeKg * 100) / 100,
+  };
+}
+
+// ─────────────────────────────────────────────
+// BULLETPROOF PARSER
+// ─────────────────────────────────────────────
+function safeParseJSON(raw: string): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e1) {
+    try {
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      if (start !== -1 && end !== -1 && end >= start) {
+        return JSON.parse(raw.substring(start, end + 1));
+      }
+    } catch (e2) {
+      return null;
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────
+// AI CALL
+// ─────────────────────────────────────────────
+interface DeepSeekResult { content: string | null; }
+
+async function callDeepSeek(prompt: string, maxTokens: number): Promise<DeepSeekResult> {
+  const deepseekKey = Deno.env.get("DEEPSEEK_API_KEY");
+  if (!deepseekKey) throw new Error("Missing DEEPSEEK_API_KEY");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 115_000);
+
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${deepseekKey}` },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: "You are an elite Indian Sports Nutritionist. Respond ONLY with valid JSON. Keep descriptions extremely concise to save tokens." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.25,
+        max_tokens: maxTokens,
+        response_format: { type: "json_object" },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return { content: null };
+    const data = await res.json();
+    return { content: data.choices?.[0]?.message?.content || null };
+  } catch (err) {
+    clearTimeout(timeout);
+    return { content: null };
+  }
+}
+
+// ─────────────────────────────────────────────
+// PROMPTS
+// ─────────────────────────────────────────────
+
+function buildDietPrompt(profile: Record<string, unknown>, macros: MacroTargets, foodType: string, mealCount: number, notes: string): string {
+  const perMealP = Math.round(macros.protein_g / mealCount);
+  const bf = safeNum(profile.body_fat_percent, 17);
+  const age = safeNum(profile.age, 23);
+  
+  return `Generate a COMPLETE 7-day Indian diet plan (Mon-Sun).
+DAILY TARGETS: ${macros.calories}kcal, ${macros.protein_g}g Protein, ${macros.carbs_g}g Carbs, ${macros.fat_g}g Fat.
+Goal: ${sanitizeField(profile.primary_goal)}. Meals/day: ${mealCount}. Food type: ${foodType}. ${notes ? `Notes: ${notes}` : ""}
+
+CRITICAL RULES:
+1. Portion sizes MUST be exact grams/pieces (e.g. "115g cooked", "3 whole"). No "bowls".
+2. "meal_tip" MUST contain deep physiological insights (e.g., "Whey + eggs stop catabolism immediately").
+3. "weekly_rules" MUST contain deep physiological advice regarding their ${bf}% body fat and age ${age}.
+
+PORTION REFERENCE (Use exactly):
+- Whole egg: 1 egg = P6g C0g F5g, 72kcal
+- Egg white: 1 white = P3.5g C0g F0g, 17kcal
+- Paneer: 100g = P18g C3g F21g, 265kcal
+- Whey protein (1 scoop = 30g): P24g C3g F1.5g, 120kcal
+- Curd/dahi full fat (150g): P5g C7g F4g, 84kcal
+- Moong/Masoor dal cooked (150g): P7.5g C16g F0.5g, 100kcal
+- Rice cooked (115g): P2.5g C31g F0g, 135kcal
+- Roti whole wheat (1 piece): P3g C15g F0.5g, 77kcal
+- Soya chunks dry (30g): P13g C11g F0.5g, 101kcal
+- Chicken breast raw (100g): P23g C0g F2g, 110kcal
+
+JSON FORMAT:
+{
+  "weekly_rules": {
+    "egg_strategy": "...",
+    "refeed_day": "...",
+    "steps_target": "...",
+    "sleep_protocol": "...",
+    "water_target": "..."
+  },
+  "weekly_meals": [
+    {
+      "day": "Monday",
+      "day_name": "Monday",
+      "type": "standard",
+      "total_kcal": 0, "total_protein_g": 0, "total_carbs_g": 0, "total_fat_g": 0,
+      "hydration_reminder": "...",
+      "daily_note": "...",
+      "meals": [
+        {
+          "time": "11:00 AM",
+          "name": "High Protein Break-Fast",
+          "kcal": 420, "protein_g": ${perMealP}, "carbs_g": 45, "fat_g": 12, "fiber_g": 5, "prep_time_min": 10,
+          "foods": [
+            { "name": "Boiled Eggs", "quantity": "4 whole", "protein_g": 24, "carbs_g": 0, "fat_g": 20, "fiber_g": 0, "kcal": 288, "cost_inr": 24 }
+          ],
+          "tip": "Fast protein first to stop catabolism."
+        }
+      ]
+    }
+  ]
+}`;
+}
+
+function buildCompactDietPrompt(macros: MacroTargets, mealCount: number): string {
+  return `Generate a very compact 7-day Indian diet plan. 
+Daily Targets: ${macros.calories}kcal, ${macros.protein_g}g Protein. Meals/day: ${mealCount}. 
+Output JSON ONLY with "weekly_rules" and "weekly_meals" array containing "meals" array. Keep text extremely short.`;
+}
+
+function buildWorkoutPrompt(): string {
+  return `Generate a 5-day/week workout plan + lifestyle rules. Return JSON ONLY with keys "workout_plan" and "lifestyle_rules".`;
+}
+
+// ─────────────────────────────────────────────
+// INDESTRUCTIBLE FALLBACK DIET
+// ─────────────────────────────────────────────
+function getFallbackDiet(macros: MacroTargets, foodType: string, mealCount: number) {
+  const perMealKcal = Math.round(macros.calories / mealCount);
+  const perMealP = Math.round(macros.protein_g / mealCount);
+  const perMealC = Math.round(macros.carbs_g / mealCount);
+  const perMealF = Math.round(macros.fat_g / mealCount);
+
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const meals = Array.from({ length: mealCount }).map((_, i) => ({
+    time: `Meal ${i + 1}`,
+    name: `Balanced ${foodType.charAt(0).toUpperCase() + foodType.slice(1)} Meal`,
+    kcal: perMealKcal, protein_g: perMealP, carbs_g: perMealC, fat_g: perMealF, fiber_g: 5, prep_time_min: 15,
+    foods: [
+      { name: "Primary Protein (Paneer/Soya/Dal/Chicken/Eggs)", quantity: "1 serving", protein_g: perMealP, carbs_g: 5, fat_g: perMealF - 2, fiber_g: 2, kcal: perMealP * 4 + (perMealF - 2) * 9 + 20, cost_inr: 30 },
+      { name: "Carbs & Veggies (Rice/Roti/Salad)", quantity: "1 serving", protein_g: 0, carbs_g: perMealC - 5, fat_g: 2, fiber_g: 3, kcal: (perMealC - 5) * 4 + 18, cost_inr: 15 }
+    ],
+    tip: "Stick strictly to your portion sizes to hit your exact macro targets."
+  }));
+
+  return {
+    weekly_rules: {
+      egg_strategy: "Use whole eggs and egg whites to balance fats without overshooting calories.",
+      refeed_day: "Sunday: Eat at maintenance calories to restore leptin levels.",
+      steps_target: "Aim for 8,000 to 10,000 steps daily. Visceral fat drops fastest with steady walking.",
+      sleep_protocol: "Prioritize 7.5-8 hours of sleep. Muscle repair and fat oxidation happen primarily during deep sleep.",
+      water_target: "Drink at least 3.5 liters of water daily to flush toxins and support liver function."
+    },
+    weekly_meals: days.map(day => ({
+      day, day_name: day, type: "standard",
+      total_kcal: macros.calories, total_protein_g: macros.protein_g, total_carbs_g: macros.carbs_g, total_fat_g: macros.fat_g,
+      hydration_reminder: "Drink a glass of water 20 mins before each meal.",
+      daily_note: `Focus on hitting ${macros.protein_g}g of protein today.`,
+      meals
+    }))
+  };
+}
+
+function getFallbackWorkout() {
+  return {
+    workout_plan: {
+      frequency: "5 sessions per week",
+      philosophy: "Progressive overload on compound movements. Nutrition is the primary driver of your recomp.",
+      weekly_schedule_summary: ["Mon: Push", "Tue: Pull", "Wed: Rest", "Thu: Legs", "Fri: HIIT", "Sat: Full Body", "Sun: Rest"],
+      rest_day_activity: "8,000-step walk.",
+      progressive_overload_note: "Add 2.5kg to compound lifts every 1-2 weeks.",
+      sessions: [
+        { day: "Monday", type: "Strength", focus: "Push", duration_min: 45, warm_up: ["Arm circles 30s"], exercises: [{ name: "Bench Press / Pushups", sets: 4, reps: "10-12", rest_sec: 90, tip: "Retract scapula." }], cool_down: ["Chest stretch 30s"] },
+        { day: "Tuesday", type: "Strength", focus: "Pull", duration_min: 45, warm_up: ["Band pull-aparts"], exercises: [{ name: "Dumbbell Rows", sets: 4, reps: "10-12", rest_sec: 90, tip: "Drive elbow back." }], cool_down: ["Lat stretch"] },
+        { day: "Thursday", type: "Strength", focus: "Legs", duration_min: 45, warm_up: ["Bodyweight squats"], exercises: [{ name: "Squats", sets: 4, reps: "10-12", rest_sec: 90, tip: "Chest up." }], cool_down: ["Quad stretch"] },
+        { day: "Friday", type: "Cardio", focus: "HIIT", duration_min: 30, warm_up: ["Jumping jacks"], exercises: [{ name: "Burpees", sets: 4, reps: "30s work / 20s rest", rest_sec: 30, tip: "Land softly." }], cool_down: ["Slow walk"] },
+        { day: "Saturday", type: "Recovery", focus: "Mobility", duration_min: 30, warm_up: ["Neck rolls"], exercises: [{ name: "Yoga Flow", sets: 1, reps: "15 mins", rest_sec: 0, tip: "Focus on breath." }], cool_down: ["Savasana"] }
+      ]
+    },
+    lifestyle_rules: {
+      sleep_hours: "7.5–8 hours",
+      water_liters: "3.5 liters/day",
+      daily_steps: "8,000–10,000 steps daily",
+      stress_management: ["4-7-8 breathing technique before bed"],
+      avoid_list: ["Liquid calories", "Deep-fried foods", "Alcohol"],
+      recovery_tips: ["Foam roll major muscle groups", "Consume protein within 45 minutes post-workout"],
+      supplement_suggestions: ["Vitamin D3", "Omega-3", "Creatine (optional)"],
+      habit_tracker: ["Hit calories?", "Hit protein?", "Worked out?", "Drank water?"]
+    }
+  };
+}
+
+// ─────────────────────────────────────────────
+// MAIN HANDLER
+// ─────────────────────────────────────────────
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) throw new Error("Unauthorized");
+
+    const tokenHash = await hashTokenDeno(authHeader.replace("Bearer ", "").trim());
+    const { data: session } = await supabaseAdmin.from("sessions").select("user_id").eq("token_hash", tokenHash).gt("expires_at", new Date().toISOString()).maybeSingle();
+    if (!session) throw new Error("Invalid session");
+
+    const userId = session.user_id;
+    const { data: profile } = await supabaseAdmin.from("profiles").select("*").eq("user_id", userId).single();
+    if (!profile) throw new Error("Profile not found");
+
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const notes = typeof body.notes === "string" ? body.notes.slice(0, 500) : "";
+    const foodType = (typeof body.food_type === "string" ? body.food_type.trim().toLowerCase() : "") || "indian";
+    const mealCount = clamp(safeNum(body.meal_count ?? profile.meal_count, 4), 3, 5);
+
+    const macros = calcMacros({ ...profile, meal_count: mealCount });
+
+    // Parallel execution
+    const [dietResult, workoutResult] = await Promise.allSettled([
+      callDeepSeek(buildDietPrompt(profile, macros, foodType, mealCount, notes), 8000),
+      callDeepSeek(buildWorkoutPrompt(), 3500),
+    ]);
+
+    let dietRaw = dietResult.status === "fulfilled" && dietResult.value.content ? safeParseJSON(dietResult.value.content) : null;
+
+    // Retry logic if parsing failed
+    if (!dietRaw) {
+      console.warn(`[${userId}] Diet JSON invalid. Retrying compact...`);
+      const retryDiet = await callDeepSeek(buildCompactDietPrompt(macros, mealCount), 7000);
+      dietRaw = retryDiet.content ? safeParseJSON(retryDiet.content) : null;
+    }
+
+    // Ultimate Fallback if DeepSeek completely crashes
+    if (!dietRaw) {
+      console.warn(`[${userId}] AI failed completely. Injecting fallback diet.`);
+      dietRaw = getFallbackDiet(macros, foodType, mealCount);
+    }
+
+    // Process Workout
+    let workoutData = workoutResult.status === "fulfilled" && workoutResult.value.content ? safeParseJSON(workoutResult.value.content) : null;
+    if (!workoutData || !workoutData.workout_plan) {
+      workoutData = getFallbackWorkout();
+    }
+
+    // Assemble Final Plan
+    const fullPlan = {
+      ...dietRaw,
+      workout_plan: workoutData.workout_plan,
+      lifestyle_rules: workoutData.lifestyle_rules || (dietRaw as any).weekly_rules,
+      daily_macros: {
+        calories: macros.calories,
+        protein_g: macros.protein_g,
+        carbs_g: macros.carbs_g,
+        fat_g: macros.fat_g,
+        fiber_g: macros.fiber_g,
+      }
+    };
+
+    const { count } = await supabaseAdmin.from("meal_plans").select("*", { count: "exact", head: true }).eq("user_id", userId);
+    const planWeek = (count || 0) + 1;
+
+    await supabaseAdmin.from("meal_plans").upsert(
+      { user_id: userId, plan_week: planWeek, plan_json: fullPlan, food_type: foodType, meal_count: mealCount, generated_at: new Date().toISOString() },
+      { onConflict: "user_id,plan_week" }
+    );
+
+    await supabaseAdmin.from("users").update({ onboarding_completed: true }).eq("id", userId);
+
+    return new Response(JSON.stringify({ success: true, plan_week: planWeek, plan: fullPlan }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  } catch (error: any) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+});
 </file>
 
 </files>

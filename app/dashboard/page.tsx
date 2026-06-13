@@ -3,27 +3,79 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useCallback } from 'react'
 
-// -------------------- Types --------------------
+// -------------------- Types & Helpers --------------------
 interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
 
-// -------------------- Meal Card --------------------
-function MealCard({
-  meal, mealIndex, today, todayLogs, onToggle,
-}: {
-  meal: any; mealIndex: number; today: string; todayLogs: FoodLog[]; onToggle: (idx: number, name: string, eaten: boolean) => void
-}) {
-  const log = todayLogs.find(l => l.meal_index === mealIndex)
+function getDayName(d: any): string {
+  let name = String(d?.day_name || d?.day || '');
+  const numMatch = name.match(/^Day\s*(\d+)$/i) || name.match(/^(\d+)$/);
+  if (numMatch) {
+    const dayNum = parseInt(numMatch[1]);
+    if (dayNum >= 1 && dayNum <= 7) {
+      const map = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      return map[dayNum - 1];
+    }
+  }
+  return name;
+}
+
+function ensureArray(val: any): any[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return [val];
+}
+
+// AI Bulletproofing: Extracts raw numbers from hallucinated strings (e.g. "400 kcal" -> 400)
+function parseNum(val: any): number {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const match = String(val).match(/[\d.]+/);
+  return match ? parseFloat(match[0]) : 0;
+}
+
+// Indestructible Data Normalizers
+function normalizeFood(raw: any) {
+  if (!raw || typeof raw !== 'object') {
+    return { name: String(raw || 'Food item'), quantity: '1 serving', kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 };
+  }
+  return {
+    name: raw.name || raw.item || raw.food || raw.Name || 'Food item',
+    quantity: raw.quantity || raw.amount || raw.qty || raw.Quantity || '1 serving',
+    protein_g: parseNum(raw.protein_g ?? raw.protein ?? raw.Protein),
+    carbs_g: parseNum(raw.carbs_g ?? raw.carbs ?? raw.Carbs),
+    fat_g: parseNum(raw.fat_g ?? raw.fat ?? raw.Fat),
+    fiber_g: parseNum(raw.fiber_g ?? raw.fiber ?? raw.Fiber),
+    kcal: parseNum(raw.kcal ?? raw.calories ?? raw.Calories ?? raw.Kcal),
+  };
+}
+
+function normalizeMeal(raw: any, index: number) {
+  if (!raw || typeof raw !== 'object') {
+    return { time: `Meal ${index + 1}`, name: String(raw || `Meal ${index + 1}`), kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, foods: [], tip: '' };
+  }
+  
+  let foods = ensureArray(raw.foods ?? raw.ingredients ?? raw.items).map(normalizeFood);
+  const name = raw.name || raw.Meal || raw.title || raw.Name || `Meal ${index + 1}`;
+  
+  const kcal = parseNum(raw.kcal ?? raw.calories) || foods.reduce((acc, f) => acc + f.kcal, 0);
+  const protein_g = parseNum(raw.protein_g ?? raw.protein) || foods.reduce((acc, f) => acc + f.protein_g, 0);
+  const carbs_g = parseNum(raw.carbs_g ?? raw.carbs) || foods.reduce((acc, f) => acc + f.carbs_g, 0);
+  const fat_g = parseNum(raw.fat_g ?? raw.fat) || foods.reduce((acc, f) => acc + f.fat_g, 0);
+
+  if (foods.length === 0) foods = [{ name, quantity: '1 serving', protein_g, carbs_g, fat_g, kcal, fiber_g: 0 }];
+
+  return { time: raw.time || raw.Time || `Meal ${index + 1}`, name, kcal, protein_g, carbs_g, fat_g, foods, tip: raw.tip ?? raw.Tip ?? raw.note ?? '' };
+}
+
+function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
+  const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
   const eaten = log?.eaten ?? false
 
   return (
-    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${
-      eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'
-    }`}>
+    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1">
-          <span className="text-xs text-[#6b6b7e] uppercase tracking-[2px] font-mono bg-[#222230] px-2.5 py-1 rounded">
-            {meal.time}
-          </span>
+          <span className="text-xs text-[#6b6b7e] uppercase tracking-[2px] font-mono bg-[#222230] px-2.5 py-1 rounded">{meal.time}</span>
           <h3 className={`text-xl font-bold mt-2 ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
         </div>
         <div className="flex items-center gap-3 ml-4">
@@ -32,47 +84,28 @@ function MealCard({
             <span className="text-sm text-gray-500"> kcal</span>
             <p className="text-xs text-green-400 font-mono mt-1">{meal.protein_g}g protein</p>
           </div>
-          <button
-            onClick={() => onToggle(mealIndex, meal.name, !eaten)}
-            title={eaten ? 'Mark as not eaten' : 'Mark as eaten'}
-            className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${
-              eaten
-                ? 'bg-green-500/20 border-green-500 text-green-400 scale-105'
-                : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'
-            }`}
-          >
-            {eaten ? '✓' : '○'}
-          </button>
+          <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400 scale-105' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>{eaten ? '✓' : '○'}</button>
         </div>
       </div>
-
       <div className="space-y-2">
-        {meal.foods?.map((food: any, j: number) => (
+        {meal.foods.map((food: any, j: number) => (
           <div key={j} className="flex justify-between py-2.5 border-t border-[#222230]/75 text-sm items-center">
             <span className="text-gray-200">
-              {food.name}{' '}
-              {food.quantity && <span className="text-gray-500 text-xs ml-1">({food.quantity})</span>}
+              {food.name} <span className="text-gray-500 text-xs ml-1">({food.quantity})</span>
               <span className="inline-flex gap-1.5 ml-3">
-                {food.protein_g != null && <span className="text-[9px] font-mono bg-green-400/10 text-green-400 px-1.5 py-0.5 rounded">P {food.protein_g}g</span>}
-                {food.carbs_g != null && <span className="text-[9px] font-mono bg-blue-400/10 text-blue-400 px-1.5 py-0.5 rounded">C {food.carbs_g}g</span>}
-                {food.fat_g != null && <span className="text-[9px] font-mono bg-yellow-500/10 text-yellow-400 px-1.5 py-0.5 rounded">F {food.fat_g}g</span>}
+                {food.protein_g > 0 && <span className="text-[9px] font-mono bg-green-400/10 text-green-400 px-1.5 py-0.5 rounded">P {food.protein_g}g</span>}
+                {food.carbs_g > 0 && <span className="text-[9px] font-mono bg-blue-400/10 text-blue-400 px-1.5 py-0.5 rounded">C {food.carbs_g}g</span>}
+                {food.fat_g > 0 && <span className="text-[9px] font-mono bg-yellow-500/10 text-yellow-400 px-1.5 py-0.5 rounded">F {food.fat_g}g</span>}
               </span>
             </span>
-            <span className="text-gray-400 font-mono text-xs">{food.cost_inr != null ? `₹${food.cost_inr}` : ''}</span>
           </div>
         ))}
       </div>
-
-      {meal.tip && (
-        <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">
-          💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong>
-        </div>
-      )}
+      {meal.tip && <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong></div>}
     </div>
   )
 }
 
-// -------------------- Adherence Ring --------------------
 function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number; streak: number }) {
   const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
   const r = 28
@@ -106,7 +139,6 @@ function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number;
   )
 }
 
-// -------------------- Macro Progress Rings --------------------
 function MacroRing({ label, consumed, target, color, unit = 'g' }: {
   label: string; consumed: number; target: number; color: string; unit?: string
 }) {
@@ -138,15 +170,16 @@ function MacroRing({ label, consumed, target, color, unit = 'g' }: {
 
 function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
   const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
-  const days = plan?.weekly_meals || []
-  const todayDay = days.find((d: any) => d.day?.toLowerCase() === todayDayName.toLowerCase())
-  const meals = todayDay?.meals || []
+  const days = ensureArray(plan?.weekly_meals)
+  const todayDay = days.find((d: any) => getDayName(d).toLowerCase() === todayDayName.toLowerCase())
+  const rawMeals = ensureArray(todayDay?.meals)
+  const normalizedMeals = rawMeals.map(normalizeMeal)
 
   let consumedP = 0, consumedC = 0, consumedF = 0
-  meals.forEach((meal: any, i: number) => {
+  normalizedMeals.forEach((meal, i) => {
     const log = todayLogs.find(l => l.meal_index === i)
     if (log?.eaten) {
-      meal.foods?.forEach((food: any) => {
+      meal.foods.forEach((food) => {
         consumedP += food.protein_g || 0
         consumedC += food.carbs_g || 0
         consumedF += food.fat_g || 0
@@ -174,47 +207,6 @@ function MacroRings({ plan, todayLogs }: { plan: any; todayLogs: FoodLog[] }) {
   )
 }
 
-// -------------------- Generating Screen --------------------
-const STEPS = [
-  { icon: '⚖️', label: 'Reading your body metrics…' },
-  { icon: '🔥', label: 'Calculating BMR & TDEE via Mifflin-St Jeor…' },
-  { icon: '🥩', label: 'Setting protein at 2.0 g / kg body weight…' },
-  { icon: '🧮', label: 'Splitting macros — carbs & fats…' },
-  { icon: '🍱', label: 'Building 7-day Indian meal rotation…' },
-  { icon: '🏋️', label: 'Designing your workout split…' },
-  { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
-]
-
-function GeneratingScreen() {
-  const [stepIdx, setStepIdx] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setStepIdx(i => (i + 1) % STEPS.length), 3500)
-    return () => clearInterval(t)
-  }, [])
-  const s = STEPS[stepIdx]
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex flex-col items-center justify-center gap-6 px-6">
-      <div className="text-6xl animate-pulse">{s.icon}</div>
-      <div className="text-center max-w-sm">
-        <p className="text-xl font-bold font-mono text-white">{s.label}</p>
-        <p className="text-sm text-gray-500 mt-2">Your AI plan is being generated…</p>
-      </div>
-      <div className="w-full max-w-xs space-y-2 mt-4">
-        {STEPS.map((step, i) => (
-          <div key={i} className={`flex items-center gap-2 text-xs font-mono transition-all ${i === stepIdx ? 'text-yellow-400' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
-            <span>{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
-            <span>{step.label}</span>
-          </div>
-        ))}
-      </div>
-      <div className="w-full bg-[#17171f] rounded-full h-1.5 border border-[#222230]">
-        <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
-      </div>
-      <p className="text-center text-xs text-gray-500 font-mono mt-3">This takes 15–40 seconds. Please don't close this tab.</p>
-    </div>
-  )
-}
-
 // -------------------- Main Dashboard --------------------
 export default function DashboardPage() {
   const router = useRouter()
@@ -226,11 +218,9 @@ export default function DashboardPage() {
   const [planFeedback, setPlanFeedback] = useState('')
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
-  const [buying, setBuying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [userName, setUserName] = useState('Athlete')
 
-  // Plan timing data
   const planWeek = plan?.plan_week ?? 1
   const planStartDate = plan?.generated_at ? new Date(plan.generated_at) : null
   const planDayIndex = planStartDate
@@ -240,18 +230,16 @@ export default function DashboardPage() {
   const nextWeek = planWeek + 1
   const hasSubscriptionForNextWeek = profile?.paid_weeks >= nextWeek
 
-  // Food log state
   const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
   const [streak, setStreak] = useState(0)
 
-  // FIX: derive today's meals in the main component so MealCard can be rendered
-  const todayMeals: any[] = (() => {
-    const days = plan?.weekly_meals || []
-    const todayDay = days.find((d: any) => d.day?.toLowerCase() === todayDayName.toLowerCase())
-    return todayDay?.meals || []
+  const todayMeals = (() => {
+    const days = ensureArray(plan?.weekly_meals)
+    const todayDay = days.find((d: any) => getDayName(d).toLowerCase() === todayDayName.toLowerCase())
+    return ensureArray(todayDay?.meals).map(normalizeMeal)
   })()
 
-  const eatenCount = todayMeals.filter((_: any, i: number) =>
+  const eatenCount = todayMeals.filter((_, i) =>
     todayLogs.find(l => l.meal_index === i)?.eaten
   ).length
 
@@ -307,7 +295,7 @@ export default function DashboardPage() {
   const generateNextWeek = async () => {
     setGenerating(true); setError(null)
     try {
-      const res = await fetch('/api/generate-plan', {
+      const res = await fetch('/api/meal-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: planFeedback.trim() }),
@@ -328,113 +316,56 @@ export default function DashboardPage() {
     }
   }
 
-  const buyNextWeek = async () => {
-    setBuying(true); setError(null)
-    try {
-      const res = await fetch('/api/subscription', { method: 'POST' })
-      if (!res.ok) {
-        const d = await res.json()
-        setError(d.error || 'Failed to buy subscription week')
-      } else {
-        await loadPlan()
-      }
-    } catch {
-      setError('Failed to purchase week')
-    } finally {
-      setBuying(false)
-    }
-  }
-
   const handleLogout = async () => {
     try { await fetch('/api/logout', { method: 'POST' }) } catch {}
     router.push('/login')
   }
 
-  // ---------- RENDER STATES ----------
-  if (loading) return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
-      Loading AapkaCoach profile...
-    </div>
-  )
-
-  // FIX: generating no longer replaces the whole page — it only disables the button
-  // The GeneratingScreen is kept for the "no plan yet" first-time generation flow only
+  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">Loading AapkaCoach profile...</div>
 
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white">
-      {/* Header */}
       <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
         <h1 className="text-2xl font-extrabold tracking-tight cursor-pointer" onClick={() => router.push('/dashboard')}>
           Aapka<span className="text-yellow-500">Coach</span>
         </h1>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button onClick={() => router.push('/dashboard/plans')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            📥 All Plans
-          </button>
-          <button onClick={() => router.push('/dashboard/subscriptions')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            💳 Subscribe
-          </button>
-          <button onClick={() => router.push('/dashboard/progress')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            📊 Progress
-          </button>
-          <button onClick={() => router.push('/dashboard/history')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            📋 History
-          </button>
-          <button onClick={() => router.push('/dashboard/profile')}
-            className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">
-            👤 Profile
-          </button>
+          <button onClick={() => router.push('/dashboard/plans')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">📥 All Plans</button>
+          <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">💳 Subscribe</button>
+          <button onClick={() => router.push('/dashboard/progress')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">📊 Progress</button>
+          <button onClick={() => router.push('/dashboard/history')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">📋 History</button>
+          <button onClick={() => router.push('/dashboard/profile')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">👤 Profile</button>
           <span className="text-xs text-gray-400 font-mono hidden md:inline bg-[#17171f] px-3 py-2 rounded-full border border-[#222230]">{userName}</span>
-          <button onClick={handleLogout}
-            className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">
-            Logout
-          </button>
+          <button onClick={handleLogout} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">Logout</button>
         </div>
       </header>
 
-      {/* Main */}
       <main className="max-w-4xl mx-auto px-4 md:px-6 pt-6 pb-16">
-
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4 text-red-400 text-sm font-mono">
-            {error}
-          </div>
-        )}
+        {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-4 text-red-400 text-sm font-mono">{error}</div>}
 
         {!plan ? (
-          /* ── No plan yet ── */
           generating ? (
-            <GeneratingScreen />
+            <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
+              <h2 className="text-2xl font-bold mb-3 text-white">Generating Plan...</h2>
+              <p className="text-gray-400 text-sm mb-6">Analyzing macros and formulating strict 7-day schedule.</p>
+            </div>
           ) : (
             <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-8 text-center my-8 max-w-xl mx-auto shadow-xl">
               <div className="text-5xl mb-4">📋</div>
               <h2 className="text-2xl font-bold mb-3 text-white">No Active Plan Found</h2>
-              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-                We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.
-              </p>
-              <button
-                onClick={() => generateNextWeek()}
-                disabled={generating}
-                className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50"
-              >
-                {generating ? 'Generating…' : 'Generate My AI Plan 🤖'}
+              <p className="text-gray-400 text-sm mb-6 leading-relaxed">We'll calculate your custom calorie targets, design your workout splits, and arrange meals matching your budget and dietary preferences.</p>
+              <button onClick={() => generateNextWeek()} disabled={generating} className="px-6 py-3 bg-yellow-500 text-black font-extrabold rounded-lg hover:bg-yellow-600 transition-colors shadow-lg shadow-yellow-500/20 disabled:opacity-50">
+                Generate My AI Plan 🤖
               </button>
             </div>
           )
         ) : (
           <div>
-            {/* ── Plan meta + subscription bar ── */}
             <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-4 mb-4 flex flex-col gap-4">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
                   <p className="text-xs text-gray-400 uppercase tracking-wider font-mono">Daily Target</p>
-                  <p className="text-2xl font-extrabold text-white mt-0.5">
-                    {plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span>
-                  </p>
+                  <p className="text-2xl font-extrabold text-white mt-0.5">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
                 </div>
                 <div className="text-right text-xs font-mono text-gray-500">
                   <p>{plan.daily_macros?.protein_g}g protein</p>
@@ -483,19 +414,12 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* ── Adherence Ring ── */}
             <div className="mb-4">
-              <AdherenceRing
-                eaten={eatenCount}
-                total={todayMeals.length}
-                streak={streak}
-              />
+              <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
             </div>
 
-            {/* ── Macro Progress Rings ── */}
             <MacroRings plan={plan} todayLogs={todayLogs} />
 
-            {/* ── TODAY'S MEALS — FIX: was never rendered ── */}
             {todayMeals.length > 0 && (
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-3">
@@ -505,15 +429,8 @@ export default function DashboardPage() {
                   </h2>
                   <span className="text-xs text-gray-500 font-mono">{eatenCount}/{todayMeals.length} eaten</span>
                 </div>
-                {todayMeals.map((meal: any, i: number) => (
-                  <MealCard
-                    key={i}
-                    meal={meal}
-                    mealIndex={i}
-                    today={today}
-                    todayLogs={todayLogs}
-                    onToggle={toggleMealEaten}
-                  />
+                {todayMeals.map((meal, i) => (
+                  <MealCard key={i} meal={meal} mealIndex={i} today={today} todayLogs={todayLogs} onToggle={toggleMealEaten} />
                 ))}
               </div>
             )}
@@ -525,30 +442,16 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* ── Link to full week plan ── */}
-            <button
-              onClick={() => router.push('/dashboard/week')}
-              className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg mb-4"
-            >
+            <button onClick={() => router.push('/dashboard/week')} className="w-full py-4 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-bold rounded-2xl hover:from-yellow-400 hover:to-yellow-300 transition-all shadow-lg mb-4">
               View Full Week Plan → (Diet · Workout · Lifestyle)
             </button>
 
-            {/* ── Generate next week (if subscription allows) ── */}
             {hasSubscriptionForNextWeek && (
               <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
                 <h3 className="font-bold text-white mb-1">Generate Week {nextWeek}</h3>
                 <p className="text-xs text-gray-500 mb-3">Add optional notes before generating your next plan.</p>
-                <textarea
-                  value={planFeedback}
-                  onChange={e => setPlanFeedback(e.target.value)}
-                  placeholder="e.g. more variety, less rice, felt low energy on Thursday…"
-                  className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-sm resize-none min-h-[80px] focus:border-yellow-500 outline-none mb-3"
-                />
-                <button
-                  onClick={generateNextWeek}
-                  disabled={generating}
-                  className="w-full py-3 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50"
-                >
+                <textarea value={planFeedback} onChange={e => setPlanFeedback(e.target.value)} placeholder="e.g. more variety, less rice..." className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-sm resize-none min-h-[80px] focus:border-yellow-500 outline-none mb-3" />
+                <button onClick={generateNextWeek} disabled={generating} className="w-full py-3 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50">
                   {generating ? '🧠 Generating Week ' + nextWeek + '…' : '🚀 Generate Week ' + nextWeek}
                 </button>
               </div>

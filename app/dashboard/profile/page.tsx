@@ -199,7 +199,7 @@ export default function ProfileEditPage() {
 
       if (regenerate) {
         // FIX: use /api/generate-plan (same as onboarding), not /api/meal-plan
-        const regenRes = await fetch('/api/generate-plan', {
+        const regenRes = await fetch('/api/meal-plan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -444,9 +444,6 @@ export default function ProfileEditPage() {
                 </button>
               ))}
             </div>
-          </Field>
-          <Field label="Daily Food Budget (₹)">
-            <input type="number" className={inputCls} value={form.daily_budget} onChange={e => set('daily_budget', e.target.value)} placeholder="200" />
           </Field>
         </Section>
 

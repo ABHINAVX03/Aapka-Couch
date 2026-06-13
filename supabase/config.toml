@@ -1,9 +1,4 @@
-[functions.generate-diet]
+[functions.generate-plan]
 enabled = true
 verify_jwt = false
-entrypoint = "./functions/generate-diet/index.ts"
-
-[functions.generate-workout]
-enabled = true
-verify_jwt = false
-entrypoint = "./functions/generate-workout/index.ts"
+entrypoint = "./functions/generate-plan/index.ts"
