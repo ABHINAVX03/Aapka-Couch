@@ -58,18 +58,20 @@ function normalizeMeal(raw: any, index: number) {
 }
 
 // -------------------- Compact UI Components --------------------
-function CompactMealCard({ meal, mealIndex, todayLogs, onToggle }: any) {
+function CompactMealCard({ meal, mealIndex, todayLogs, onToggle, isHistorical }: any) {
   const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
   const eaten = log?.eaten ?? false
 
   return (
-    <div className={`flex items-center justify-between p-4 border rounded-2xl mb-3 transition-all ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
+    <div className={`flex items-center justify-between p-4 border rounded-2xl mb-3 transition-all ${isHistorical ? 'bg-[#17171f] border-[#222230] opacity-80' : eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
       <div className="flex items-center gap-4 w-full">
-        <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>
-          {eaten ? '✓' : ''}
-        </button>
+        {!isHistorical && (
+          <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>
+            {eaten ? '✓' : ''}
+          </button>
+        )}
         <div className="flex-1">
-          <p className={`text-sm font-bold ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</p>
+          <p className={`text-sm font-bold ${!isHistorical && eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</p>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-[10px] bg-[#222230] text-gray-400 px-2 py-0.5 rounded font-mono">{meal.time}</span>
             <span className="text-xs text-gray-500 font-mono"><span className="text-yellow-500 font-bold">{meal.kcal}</span> kcal · {meal.protein_g}g P</span>
@@ -202,44 +204,41 @@ export default function DashboardPage() {
   const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
 
   const [plan, setPlan] = useState<any>(null)
-  const [allPlans, setAllPlans] = useState<any[]>([]) // Used to accurately track Week #
+  const [allPlans, setAllPlans] = useState<any[]>([]) 
+  const [activePlanId, setActivePlanId] = useState<string | null>(null) // TRACKS WHICH WEEK IS BEING VIEWED
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   
-  // Controls the immersive loading screen
   const [generatingWeek, setGeneratingWeek] = useState<number | null>(null)
   const [planFeedback, setPlanFeedback] = useState('')
-  
   const [error, setError] = useState<string | null>(null)
   const [userName, setUserName] = useState('Athlete')
-
   const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
   const [streak, setStreak] = useState(0)
 
   // Sync state from Database
-  const loadPlan = async () => {
+  const loadDashboard = async () => {
     setLoading(true); setError(null)
     try {
-      const res = await fetch('/api/me')
-      if (!res.ok) { router.push('/login'); return }
-      const { user } = await res.json()
+      const [userRes, plansRes] = await Promise.all([fetch('/api/me'), fetch('/api/meal-plans')])
+      
+      if (!userRes.ok) { router.push('/login'); return }
+      
+      const { user } = await userRes.json()
       setUserName(user?.profile?.name || user?.email || 'Athlete')
       setProfile(user?.profile || null)
 
-      // Fetch the actual current plan JSON
-      const planRes = await fetch('/api/meal-plan')
-      if (planRes.ok) {
-        const data = await planRes.json()
-        setPlan(data.plan || null)
-      } else { setPlan(null) }
-
-      // Fetch all plans to establish perfect week counts
-      const allPlansRes = await fetch('/api/meal-plans')
-      if (allPlansRes.ok) {
-        const data = await allPlansRes.json()
-        setAllPlans(data.plans || [])
+      if (plansRes.ok) {
+        const data = await plansRes.json()
+        const plansList = data.plans || []
+        setAllPlans(plansList)
+        
+        // If we don't have an active plan selected, default to the most recent one
+        if (plansList.length > 0 && !activePlanId) {
+          setPlan(plansList[0].plan_json)
+          setActivePlanId(plansList[0].id)
+        }
       }
-
     } catch { setError('Failed to load your dashboard data.') }
     finally { setLoading(false) }
   }
@@ -251,25 +250,21 @@ export default function DashboardPage() {
     } catch { /* silent */ }
   }, [today])
 
-  useEffect(() => { loadPlan() }, [])
+  useEffect(() => { loadDashboard() }, [])
   useEffect(() => { if (plan) loadFoodLog() }, [plan, loadFoodLog])
 
   // -------------------- CORE LOGIC --------------------
-  // Calculate exactly which week we are on by counting the Vault records
-  const planWeek = allPlans.length > 0 ? allPlans.length : (plan ? 1 : 0)
-  const paidWeeks = profile?.paid_weeks ?? 1
+  const isLatestPlan = allPlans.length > 0 && activePlanId === allPlans[0].id;
+  const isHistorical = !isLatestPlan;
   
-  // The roadmap shows up to the next locked week
-  const totalVisibleWeeks = Math.max(planWeek, paidWeeks) + 1
-  const weeksArray = Array.from({ length: totalVisibleWeeks }, (_, i) => i + 1)
+  const totalGeneratedWeeks = allPlans.length
+  // Determine the week number currently being viewed based on its index in the allPlans array
+  const activePlanIndex = allPlans.findIndex(p => p.id === activePlanId)
+  const viewingWeekNum = activePlanIndex !== -1 ? totalGeneratedWeeks - activePlanIndex : 0
 
-  // Extract Dates from the Vault for accurate day counting
-  const latestPlanRecord = allPlans.length > 0 ? allPlans[0] : null;
-  const planStartDate = latestPlanRecord?.generated_at ? new Date(latestPlanRecord.generated_at) : null;
-  const planDayIndex = planStartDate
-    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
-    : 1
-  const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
+  const paidWeeks = profile?.paid_weeks ?? 1
+  const totalVisibleWeeks = Math.max(totalGeneratedWeeks, paidWeeks) + 1
+  const weeksArray = Array.from({ length: totalVisibleWeeks }, (_, i) => i + 1)
 
   const todayMeals = (() => {
     const days = ensureArray(plan?.weekly_meals)
@@ -280,7 +275,15 @@ export default function DashboardPage() {
   const eatenCount = todayMeals.filter((_, i) => todayLogs.find(l => l.meal_index === i)?.eaten).length
 
   // -------------------- ACTIONS --------------------
+  const switchPlan = (planRecord: any) => {
+    setPlan(planRecord.plan_json)
+    setActivePlanId(planRecord.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
+    if (isHistorical) return; // Prevent logging meals on old plans
+    
     setTodayLogs(prev => {
       const existing = prev.find(l => l.meal_index === mealIndex)
       if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
@@ -299,7 +302,9 @@ export default function DashboardPage() {
       const res = await fetch('/api/meal-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: planFeedback.trim() }) })
       const data = await res.json().catch(() => null)
       if (res.ok && data?.success) {
-        await loadPlan() // Hard refresh syncs the Vault and removes the generate button!
+        // Reset active plan to force it to load the newly generated plan
+        setActivePlanId(null)
+        await loadDashboard()
         setPlanFeedback('')
       } else { setError(data?.error || 'Failed to generate plan') }
     } catch { setError('An error occurred while generating.') } 
@@ -311,7 +316,7 @@ export default function DashboardPage() {
     router.push('/login')
   }
 
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
+  if (loading && !plan) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
 
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white relative pb-20">
@@ -335,7 +340,6 @@ export default function DashboardPage() {
       <main className="max-w-3xl mx-auto px-4 md:px-6 pt-6 animate-in fade-in duration-500">
         {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6 text-red-400 text-sm font-mono text-center">{error}</div>}
 
-        {/* TOP OVERVIEW - Compact and Clean */}
         {!plan ? (
           <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center my-12 shadow-2xl">
             <div className="text-6xl mb-6 drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">🚀</div>
@@ -353,11 +357,22 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
+            {/* Banner if viewing history */}
+            {isHistorical && (
+              <div className="mb-6 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center justify-between">
+                <p className="text-yellow-400 text-sm font-semibold">You are viewing an archived plan (Week {viewingWeekNum}).</p>
+                <button onClick={() => switchPlan(allPlans[0])} className="text-xs bg-[#0c0c10] text-gray-300 px-3 py-1.5 rounded-lg border border-[#222230] hover:text-white">Back to Current</button>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
                 <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
                 <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
-                <button onClick={() => router.push('/dashboard/week')} className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors">
+                <button 
+                  onClick={() => router.push(isHistorical ? `/dashboard/week?planId=${activePlanId}` : '/dashboard/week')} 
+                  className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors"
+                >
                   View Full Diet Plan →
                 </button>
               </div>
@@ -377,7 +392,7 @@ export default function DashboardPage() {
                   <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
                 </div>
                 {todayMeals.map((meal, i) => (
-                  <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} />
+                  <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} isHistorical={isHistorical} />
                 ))}
               </div>
             )}
@@ -386,38 +401,38 @@ export default function DashboardPage() {
             <div className="mt-8">
               <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2"><span>🗺️</span> Transformation Journey</h2>
               <div className="space-y-4 relative">
-                {/* Connecting Line */}
                 <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-[#222230] -z-10"></div>
                 
                 {weeksArray.map(w => {
-                  // 1. COMPLETED WEEK
-                  if (w < planWeek) {
+                  const isGenerated = w <= totalGeneratedWeeks
+                  const planForThisWeek = isGenerated ? allPlans[totalGeneratedWeeks - w] : null
+                  const isCurrentlyViewing = planForThisWeek?.id === activePlanId
+
+                  // 1. GENERATED WEEKS (Current or History)
+                  if (isGenerated) {
                     return (
                       <div key={w} className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-green-500/10 text-green-400 flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 border-4 border-[#0c0c10]">✓</div>
-                        <div className="flex-1 flex items-center justify-between p-4 bg-[#17171f] border border-[#222230] rounded-2xl opacity-75 hover:opacity-100 transition-opacity">
-                          <div><p className="font-bold text-white">Week {w}</p><p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-0.5">Completed</p></div>
-                          <button onClick={() => router.push('/dashboard/history')} className="px-4 py-2 bg-[#222230] text-gray-300 text-xs font-bold rounded-lg hover:bg-[#333] transition-colors">View Vault</button>
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold z-10 border-4 border-[#0c0c10] ${isCurrentlyViewing ? 'bg-yellow-500 text-black shadow-[0_0_15px_rgba(234,179,8,0.4)] text-xl' : 'bg-green-500/20 text-green-400 text-lg'}`}>
+                          {isCurrentlyViewing ? '⚡' : '✓'}
                         </div>
+                        <button 
+                          onClick={() => !isCurrentlyViewing && switchPlan(planForThisWeek)}
+                          className={`flex-1 flex items-center justify-between p-5 rounded-2xl transition-all text-left ${isCurrentlyViewing ? 'bg-gradient-to-r from-[#1c1c26] to-[#17171f] border border-yellow-500/50 shadow-lg cursor-default' : 'bg-[#17171f] border border-[#222230] hover:border-gray-500 cursor-pointer'}`}
+                        >
+                          <div>
+                            <p className={`font-bold text-lg ${isCurrentlyViewing ? 'text-white' : 'text-gray-300'}`}>Week {w}</p>
+                            <p className={`text-[10px] font-mono uppercase tracking-widest mt-0.5 ${isCurrentlyViewing ? 'text-yellow-500' : 'text-gray-500'}`}>
+                              {isCurrentlyViewing ? 'Currently Viewing' : 'View Plan'}
+                            </p>
+                          </div>
+                          {!isCurrentlyViewing && <span className="text-xl text-gray-500">→</span>}
+                        </button>
                       </div>
                     )
                   }
 
-                  // 2. ACTIVE WEEK
-                  if (w === planWeek && planWeek > 0) {
-                    return (
-                      <div key={w} className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-yellow-500 text-black flex items-center justify-center font-extrabold text-xl flex-shrink-0 z-10 border-4 border-[#0c0c10] shadow-[0_0_15px_rgba(234,179,8,0.4)]">⚡</div>
-                        <div className="flex-1 flex items-center justify-between p-5 bg-gradient-to-r from-[#1c1c26] to-[#17171f] border border-yellow-500/50 rounded-2xl shadow-lg">
-                          <div><p className="font-bold text-white text-lg">Week {w}</p><p className="text-[10px] text-yellow-500 font-mono uppercase tracking-widest mt-0.5">Current Plan</p></div>
-                          <button onClick={() => router.push('/dashboard/week')} className="px-5 py-2.5 bg-yellow-500 text-black text-xs font-extrabold rounded-lg hover:bg-yellow-400 shadow-md transition-all">View Plan</button>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 3. UNLOCKED (READY TO GENERATE)
-                  if (w > planWeek && w <= paidWeeks) {
+                  // 2. UNLOCKED (READY TO GENERATE)
+                  if (w > totalGeneratedWeeks && w <= paidWeeks) {
                     return (
                       <div key={w} className="flex gap-4">
                         <div className="w-12 h-12 rounded-full bg-[#17171f] text-gray-400 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 mt-2">🔓</div>
@@ -433,7 +448,7 @@ export default function DashboardPage() {
                     )
                   }
 
-                  // 4. LOCKED
+                  // 3. LOCKED
                   return (
                     <div key={w} className="flex items-center gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
                       <div className="w-12 h-12 rounded-full bg-[#0c0c10] text-gray-600 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10">🔒</div>

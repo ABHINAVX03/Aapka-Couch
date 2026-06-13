@@ -802,430 +802,6 @@ export async function POST(req: Request) {
 }
 </file>
 
-<file path="app/dashboard/history/page.tsx">
-'use client'
-
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
-
-interface PlanSummary {
-  id: string
-  generated_at: string
-  plan_json: {
-    daily_macros?: { calories: number; protein_g: number; carbs_g: number; fat_g: number }
-    weekly_meals?: any[]
-    workout_plan?: { split: string; days_per_week: number }
-  }
-}
-
-export default function HistoryPage() {
-  const router = useRouter()
-  const [plans, setPlans] = useState<PlanSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [activePlan, setActivePlan] = useState<string | null>(null)
-  const [restoring, setRestoring] = useState(false)
-
-  useEffect(() => { fetchPlans() }, [])
-
-  const fetchPlans = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/meal-plans')
-      if (!res.ok) { router.push('/login'); return }
-      const { plans } = await res.json()
-      setPlans(plans || [])
-      if (plans?.length > 0) setActivePlan(plans[0].id)
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const restorePlan = async (planId: string) => {
-    // The "latest" plan is always what the dashboard shows.
-    // To restore an old plan, we just navigate to dashboard (user can see any day).
-    setActivePlan(planId)
-    router.push('/dashboard')
-  }
-
-  if (loading) return (
-    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
-      Loading plan history...
-    </div>
-  )
-
-  const selected = plans.find(p => p.id === activePlan)
-
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white">
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500 transition-colors">
-            ← Dashboard
-          </button>
-          <span className="text-gray-600">/</span>
-          <h1 className="text-lg font-extrabold">Plan<span className="text-yellow-500"> History</span></h1>
-        </div>
-        <span className="text-xs text-gray-500 font-mono">{plans.length} plan{plans.length !== 1 ? 's' : ''} generated</span>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 md:px-6 py-6">
-        {plans.length === 0 ? (
-          <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-2xl p-12 text-center">
-            <div className="text-4xl mb-3">📋</div>
-            <p className="text-gray-400">No plans generated yet. Go to your dashboard to generate your first plan.</p>
-            <button onClick={() => router.push('/dashboard')} className="mt-4 px-5 py-2 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors text-sm">
-              Go to Dashboard
-            </button>
-          </div>
-        ) : (
-          <div className="grid md:grid-cols-3 gap-6">
-            {/* Plan list sidebar */}
-            <div className="space-y-2">
-              <p className="text-xs text-gray-500 uppercase tracking-widest font-mono mb-3">Generated Plans</p>
-              {plans.map((plan, i) => {
-                const date = new Date(plan.generated_at)
-                const isActive = plan.id === activePlan
-                return (
-                  <button
-                    key={plan.id}
-                    onClick={() => setActivePlan(plan.id)}
-                    className={`w-full text-left p-4 rounded-xl border transition-all ${
-                      isActive
-                        ? 'border-yellow-500/50 bg-yellow-500/5'
-                        : 'border-[#222230] bg-[#17171f] hover:border-yellow-500/20'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-white">
-                          {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </p>
-                        <p className="text-xs text-gray-500 font-mono mt-0.5">
-                          {date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                      </div>
-                      {i === 0 && (
-                        <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded font-bold font-mono">LATEST</span>
-                      )}
-                    </div>
-                    <div className="mt-2 flex gap-2 text-xs font-mono text-gray-400">
-                      <span>{plan.plan_json?.daily_macros?.calories ?? '?'} kcal</span>
-                      <span>·</span>
-                      <span>{plan.plan_json?.daily_macros?.protein_g ?? '?'}g P</span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-
-            {/* Plan detail */}
-            {selected && (
-              <div className="md:col-span-2 space-y-4">
-                <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="font-bold text-white">Plan Details</h2>
-                    <span className="text-xs text-gray-500 font-mono">
-                      {new Date(selected.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
-                    </span>
-                  </div>
-
-                  {/* Macros */}
-                  {selected.plan_json?.daily_macros && (
-                    <div className="grid grid-cols-4 gap-3 mb-5">
-                      {[
-                        { label: 'Calories', value: selected.plan_json.daily_macros.calories, unit: 'kcal', color: 'text-yellow-400' },
-                        { label: 'Protein', value: selected.plan_json.daily_macros.protein_g, unit: 'g', color: 'text-green-400' },
-                        { label: 'Carbs', value: selected.plan_json.daily_macros.carbs_g, unit: 'g', color: 'text-blue-400' },
-                        { label: 'Fat', value: selected.plan_json.daily_macros.fat_g, unit: 'g', color: 'text-orange-400' },
-                      ].map(m => (
-                        <div key={m.label} className="bg-[#0c0c10] rounded-xl p-3 text-center border border-[#222230]">
-                          <p className={`text-xl font-extrabold ${m.color}`}>{m.value}</p>
-                          <p className="text-[10px] text-gray-500 font-mono">{m.unit}</p>
-                          <p className="text-[10px] text-gray-600 uppercase tracking-wider">{m.label}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Workout info */}
-                  {selected.plan_json?.workout_plan && (
-                    <div className="bg-[#0c0c10] border border-[#222230] rounded-xl p-4 mb-4">
-                      <p className="text-xs text-gray-500 uppercase tracking-wider font-mono mb-2">Workout Split</p>
-                      <p className="text-white font-semibold">{selected.plan_json.workout_plan.split}</p>
-                      <p className="text-sm text-gray-400 mt-1">{selected.plan_json.workout_plan.days_per_week} days / week</p>
-                    </div>
-                  )}
-
-                  {/* Meal day preview */}
-                  {selected.plan_json?.weekly_meals?.[0] && (
-                    <div>
-                      <p className="text-xs text-gray-500 uppercase tracking-wider font-mono mb-3">Day 1 Meals Preview</p>
-                      <div className="space-y-2">
-                        {selected.plan_json.weekly_meals[0].meals?.slice(0, 3).map((meal: any, i: number) => (
-                          <div key={i} className="flex justify-between items-center py-2 border-b border-[#222230]/50 text-sm">
-                            <div>
-                              <span className="text-gray-200">{meal.name}</span>
-                              <span className="text-gray-500 text-xs ml-2 font-mono">{meal.time}</span>
-                            </div>
-                            <span className="text-yellow-500 font-mono text-xs">{meal.kcal} kcal</span>
-                          </div>
-                        ))}
-                        {(selected.plan_json.weekly_meals[0].meals?.length ?? 0) > 3 && (
-                          <p className="text-xs text-gray-500 text-center pt-1">
-                            + {selected.plan_json.weekly_meals[0].meals.length - 3} more meals…
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Action to go to dashboard with this plan */}
-                <button
-                  onClick={() => router.push('/dashboard')}
-                  className="w-full py-3 bg-yellow-500 text-black font-extrabold rounded-xl hover:bg-yellow-400 transition-colors"
-                >
-                  View Full Plan on Dashboard →
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-    </div>
-  )
-}
-</file>
-
-<file path="app/dashboard/plans/page.tsx">
-'use client'
-
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
-
-interface Scan { id: string; scan_date: string; body_fat_percent: number | null; weight_kg: number | null; waist_inches: number | null; visceral_fat: number | null; }
-interface Profile { body_fat_percent: number; weight_kg: number; target_bf_percent: number; timeframe_weeks: number; primary_goal: string; name: string; }
-
-function StatCard({ label, value, unit, delta, deltaLabel }: any) {
-  const isGood = delta != null && delta < 0
-  const isNeutral = delta == null || delta === 0
-  return (
-    <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 flex flex-col gap-1 transition-all hover:border-yellow-500/30">
-      <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">{label}</p>
-      <p className="text-3xl font-extrabold text-white">
-        {value}<span className="text-sm font-normal text-gray-400 ml-1">{unit}</span>
-      </p>
-      {delta != null && (
-        <p className={`text-xs font-mono mt-2 flex items-center gap-1 ${isGood ? 'text-green-400' : isNeutral ? 'text-gray-500' : 'text-red-400'}`}>
-          <span className={`px-1.5 py-0.5 rounded-md ${isGood ? 'bg-green-400/10' : isNeutral ? 'bg-gray-500/10' : 'bg-red-400/10'}`}>
-            {delta > 0 ? '↑' : delta < 0 ? '↓' : ''} {Math.abs(delta).toFixed(1)}
-          </span>
-          <span className="text-gray-500">{deltaLabel}</span>
-        </p>
-      )}
-    </div>
-  )
-}
-
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="bg-[#0c0c10]/90 backdrop-blur-md border border-[#222230] rounded-xl p-4 shadow-2xl">
-      <p className="text-gray-400 mb-2 font-mono text-xs uppercase tracking-wider border-b border-[#222230] pb-2">{label}</p>
-      {payload.map((p: any) => (
-        <p key={p.name} style={{ color: p.color }} className="font-bold text-lg">
-          {p.name}: {p.value?.toFixed(1)}{p.name.includes('BF') ? '%' : p.name.includes('Waist') ? '"' : ' kg'}
-        </p>
-      ))}
-    </div>
-  )
-}
-
-export default function ProgressPage() {
-  const router = useRouter()
-  const [scans, setScans] = useState<Scan[]>([])
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [activeMetric, setActiveMetric] = useState<'bf' | 'weight' | 'waist'>('weight')
-
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [weight, setWeight] = useState('')
-  const [bf, setBf] = useState('')
-  const [waist, setWaist] = useState('')
-  const [vf, setVf] = useState('')
-  
-  const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [successMsg, setSuccessMsg] = useState<string | null>(null)
-
-  useEffect(() => { fetchData() }, [])
-
-  const fetchData = async () => {
-    setLoading(true)
-    try {
-      const [scansRes, meRes] = await Promise.all([fetch('/api/scans'), fetch('/api/me')])
-      if (!scansRes.ok || !meRes.ok) { router.push('/login'); return }
-      const { scans } = await scansRes.json()
-      const { user } = await meRes.json()
-      setScans(scans || [])
-      setProfile(user?.profile || null)
-      if (scans && scans.length > 0 && scans[0].body_fat_percent) setActiveMetric('bf')
-    } catch { setError('Failed to load data') } 
-    finally { setLoading(false) }
-  }
-
-  const addScan = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitting(true); setError(null); setSuccessMsg(null)
-    try {
-      const res = await fetch('/api/scans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scan_date: date, weight_kg: weight ? parseFloat(weight) : null,
-          body_fat_percent: bf ? parseFloat(bf) : null, waist_inches: waist ? parseFloat(waist) : null,
-          visceral_fat: vf ? parseFloat(vf) : null,
-        }),
-      })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed to save scan')
-      
-      setWeight(''); setBf(''); setWaist(''); setVf(''); setShowForm(false)
-      setSuccessMsg('✅ Scan saved successfully!')
-      setTimeout(() => setSuccessMsg(null), 3000)
-      await fetchData()
-    } catch (err: any) { setError(err.message || 'Error saving scan.') } 
-    finally { setSubmitting(false) }
-  }
-
-  const chartData = scans.map(s => ({
-    date: new Date(s.scan_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
-    bf: s.body_fat_percent, weight: s.weight_kg, waist: s.waist_inches,
-  }))
-
-  const latest = scans[scans.length - 1]
-  const first = scans[0]
-  const bfDelta = (latest?.body_fat_percent && first?.body_fat_percent) ? latest.body_fat_percent - first.body_fat_percent : null
-  const weightDelta = (latest?.weight_kg && first?.weight_kg) ? latest.weight_kg - first.weight_kg : null
-  const waistDelta = (latest?.waist_inches && first?.waist_inches) ? latest.waist_inches - first.waist_inches : null
-
-  const metricConfig = {
-    bf: { key: 'bf', color: '#eab308', name: 'Body Fat %', target: profile?.target_bf_percent },
-    weight: { key: 'weight', color: '#3b82f6', name: 'Weight (kg)', target: undefined },
-    waist: { key: 'waist', color: '#a855f7', name: 'Waist (in)', target: undefined },
-  }
-  const mc = metricConfig[activeMetric]
-
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Loading telemetry...</div>
-
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white pb-20">
-      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-xl z-20">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500 transition-colors">← Dashboard</button>
-          <span className="text-gray-600">/</span>
-          <h1 className="text-lg font-extrabold">Progress<span className="text-yellow-500"> Tracker</span></h1>
-        </div>
-        <button onClick={() => setShowForm(!showForm)} className={`px-4 py-2 font-bold text-sm rounded-full transition-all ${showForm ? 'bg-[#17171f] text-white border border-[#222230]' : 'bg-yellow-500 text-black hover:bg-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.2)]'}`}>
-          {showForm ? 'Cancel' : '+ Log Weekly Scan'}
-        </button>
-      </header>
-
-      <main className="max-w-4xl mx-auto px-4 md:px-6 py-8 space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
-        {successMsg && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-green-400 text-sm font-mono text-center">{successMsg}</div>}
-
-        {/* LOG NEW SCAN FORM */}
-        {showForm && (
-          <div className="bg-[#121218] border border-yellow-500/50 rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h2 className="text-xl font-bold mb-6 text-yellow-500 flex items-center gap-2"><span>📏</span> Log Body Metrics</h2>
-            {error && <p className="text-red-400 text-sm mb-4 font-mono bg-red-500/10 p-3 rounded-lg">{error}</p>}
-            <form onSubmit={addScan} className="space-y-5">
-              <div>
-                <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Scan Date</label>
-                <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" required disabled={submitting} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Weight (kg)</label>
-                  <input type="number" step="0.1" value={weight} onChange={e => setWeight(e.target.value)} placeholder={profile?.weight_kg?.toString() ?? '74.5'} className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Body Fat %</label>
-                  <input type="number" step="0.1" value={bf} onChange={e => setBf(e.target.value)} placeholder={profile?.body_fat_percent?.toString() ?? '16.5'} className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Waist (in)</label>
-                  <input type="number" step="0.1" value={waist} onChange={e => setWaist(e.target.value)} placeholder="32.0" className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Visceral Fat</label>
-                  <input type="number" step="0.1" value={vf} onChange={e => setVf(e.target.value)} placeholder="8.0" className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
-                </div>
-              </div>
-              <button type="submit" disabled={submitting} className="w-full py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-xl hover:bg-yellow-400 transition-all shadow-[0_0_15px_rgba(234,179,8,0.3)] disabled:opacity-50 mt-2">
-                {submitting ? 'Saving to Vault...' : 'Save Scan Data'}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* STATS GRID */}
-        {scans.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard label="Body Fat" value={latest.body_fat_percent?.toFixed(1) ?? '—'} unit="%" delta={bfDelta} deltaLabel="since start" />
-            <StatCard label="Weight" value={latest.weight_kg?.toFixed(1) ?? '—'} unit="kg" delta={weightDelta} deltaLabel="since start" />
-            <StatCard label="Waist" value={latest.waist_inches?.toFixed(1) ?? '—'} unit="in" delta={waistDelta} deltaLabel="since start" />
-            <StatCard label="Total Scans" value={scans.length} unit="logs" />
-          </div>
-        ) : (
-          <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-3xl p-12 text-center">
-            <div className="text-5xl mb-4 opacity-50">📊</div>
-            <h3 className="text-xl font-bold text-white mb-2">No Data Yet</h3>
-            <p className="text-gray-400 text-sm leading-relaxed max-w-sm mx-auto">Log your first body scan to unlock intelligent charts and see your recomp progress over time.</p>
-          </div>
-        )}
-
-        {/* CHART */}
-        {chartData.length >= 2 && (
-          <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-6 shadow-xl">
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-              <h2 className="font-bold text-white text-lg flex items-center gap-2"><span>📈</span> Trajectory</h2>
-              <div className="flex bg-[#0c0c10] p-1 rounded-xl border border-[#222230]">
-                {(['weight', 'bf', 'waist'] as const).map(m => (
-                  <button key={m} onClick={() => setActiveMetric(m)} className={`text-xs px-4 py-2 rounded-lg font-bold transition-all ${activeMetric === m ? 'bg-[#222230] text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}>
-                    {m === 'bf' ? 'Body Fat %' : m === 'weight' ? 'Weight' : 'Waist'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="h-[280px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: -20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#222230" vertical={false} />
-                  <XAxis dataKey="date" stroke="#6b6b7e" fontSize={10} tick={{ fill: '#6b6b7e' }} tickMargin={10} axisLine={false} tickLine={false} />
-                  <YAxis stroke="#6b6b7e" fontSize={10} tick={{ fill: '#6b6b7e' }} domain={['auto', 'auto']} axisLine={false} tickLine={false} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#222230', strokeWidth: 2 }} />
-                  {mc.target != null && (
-                    <ReferenceLine y={mc.target} stroke={mc.color} strokeDasharray="6 4" strokeOpacity={0.4} label={{ value: `Goal: ${mc.target}`, fill: mc.color, fontSize: 10, position: 'insideTopRight' }} />
-                  )}
-                  <Line type="monotone" dataKey={mc.key} stroke={mc.color} strokeWidth={3} dot={{ fill: '#0c0c10', stroke: mc.color, strokeWidth: 2, r: 5 }} activeDot={{ r: 8, fill: mc.color, stroke: '#0c0c10', strokeWidth: 3 }} name={mc.name} animationDuration={1000} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
-  )
-}
-</file>
-
 <file path="app/dashboard/progress/page.tsx">
 'use client'
 
@@ -1653,117 +1229,6 @@ export default function ProgressPage() {
             </div>
           </div>
         )}
-      </main>
-    </div>
-  )
-}
-</file>
-
-<file path="app/dashboard/subscriptions/page.tsx">
-'use client'
-
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-
-export default function SubscriptionsPage() {
-  const router = useRouter()
-  const [loading, setLoading] = useState(true)
-  const [profile, setProfile] = useState<any>(null)
-  const [buying, setBuying] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
-
-  useEffect(() => { loadProfile() }, [])
-
-  const loadProfile = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/me')
-      if (!res.ok) { router.push('/login'); return }
-      const { user } = await res.json()
-      setProfile(user?.profile || null)
-    } catch { setError('Failed to load profile') } 
-    finally { setLoading(false) }
-  }
-
-  const buyWeek = async () => {
-    setBuying(true); setError(null); setSuccess(false)
-    try {
-      // Simulated Payment Gateway Delay
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      
-      const res = await fetch('/api/subscription', { method: 'POST' })
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Payment gateway failed')
-      
-      await loadProfile()
-      setSuccess(true)
-    } catch (err: any) { setError(err.message) } 
-    finally { setBuying(false) }
-  }
-
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Securing connection...</div>
-
-  const nextWeek = (profile?.paid_weeks ?? 1) + 1
-
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white">
-      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-xl z-20">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500 transition-colors">← Dashboard</button>
-          <span className="text-gray-600">/</span>
-          <h1 className="text-lg font-extrabold">Billing & <span className="text-yellow-500">Unlocks</span></h1>
-        </div>
-      </header>
-
-      <main className="max-w-2xl mx-auto px-4 md:px-6 py-8 space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
-        
-        {/* CURRENT STATUS */}
-        <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-6 md:p-8 text-center shadow-xl">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10 mb-4">
-            <span className="text-3xl">🛡️</span>
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Account Active</h2>
-          <p className="text-gray-400">You currently have full access to <span className="text-yellow-400 font-mono font-bold">Week {profile?.paid_weeks ?? 1}</span>.</p>
-          <div className="mt-6 bg-[#0c0c10] rounded-full h-2 border border-[#222230] overflow-hidden">
-            <div className="bg-gradient-to-r from-green-500 to-yellow-500 h-full w-full"></div>
-          </div>
-        </div>
-
-        {/* UPGRADE CARD */}
-        <div className="bg-gradient-to-br from-[#1c1c26] to-[#121218] border border-yellow-500/30 rounded-3xl p-6 md:p-8 shadow-[0_0_30px_rgba(234,179,8,0.05)] relative overflow-hidden">
-          <div className="absolute top-0 right-0 bg-yellow-500 text-black text-[10px] font-extrabold uppercase tracking-widest px-4 py-1 rounded-bl-xl">Next Step</div>
-          
-          <h2 className="text-2xl font-bold text-white mb-1">Unlock Week {nextWeek}</h2>
-          <p className="text-sm text-gray-400 mb-6">Continuous progression requires continuous recalculation.</p>
-
-          <div className="space-y-4 mb-8">
-            {[
-              "AI recalculates your TDEE based on your new weight.",
-              "Macronutrient ratios adjusted to break plateaus.",
-              "Fresh 7-day meal plan with new recipes & variety.",
-              "Next progression step unlocked in your workout split."
-            ].map((feature, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className="text-yellow-500 mt-0.5">✓</span>
-                <span className="text-sm text-gray-300 leading-relaxed">{feature}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-end gap-2 mb-6 border-t border-[#222230] pt-6">
-            <span className="text-4xl font-extrabold text-white">₹299</span>
-            <span className="text-sm text-gray-500 font-mono mb-1">/ week</span>
-          </div>
-
-          {error && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl text-center">{error}</div>}
-          {success && <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-xl text-center font-bold">🎉 Payment Successful! Week {nextWeek} Unlocked.</div>}
-
-          <button onClick={buyWeek} disabled={buying || success} className="w-full py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-xl hover:bg-yellow-400 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)] disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2">
-            {buying ? <span className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></span> : success ? 'Redirecting...' : `Pay Securely to Unlock`}
-          </button>
-          
-          <p className="text-center text-[10px] text-gray-500 mt-4 uppercase tracking-widest font-mono">🔒 256-bit Encrypted Checkout</p>
-        </div>
       </main>
     </div>
   )
@@ -2687,6 +2152,552 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 </file>
 
+<file path="app/dashboard/history/page.tsx">
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+
+interface PlanSummary {
+  id: string
+  generated_at: string
+  plan_week: number
+  plan_json: {
+    daily_macros?: { calories: number; protein_g: number; carbs_g: number; fat_g: number }
+    weekly_meals?: any[]
+    workout_plan?: { split: string; days_per_week: number; sessions?: any[] }
+  }
+}
+
+export default function HistoryPage() {
+  const router = useRouter()
+  const [plans, setPlans] = useState<PlanSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [activePlan, setActivePlan] = useState<string | null>(null)
+
+  useEffect(() => { fetchPlans() }, [])
+
+  const fetchPlans = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/meal-plans')
+      if (!res.ok) { router.push('/login'); return }
+      const { plans } = await res.json()
+      setPlans(plans || [])
+      if (plans?.length > 0) setActivePlan(plans[0].id)
+    } catch {
+      // silently fail
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Navigate to the week view for this specific plan
+  const viewPlan = (planId: string) => {
+    router.push(`/dashboard/week?planId=${planId}`)
+  }
+
+  if (loading) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center font-mono">
+      Loading plan history...
+    </div>
+  )
+
+  const selected = plans.find(p => p.id === activePlan)
+
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500 transition-colors">
+            ← Dashboard
+          </button>
+          <span className="text-gray-600">/</span>
+          <h1 className="text-lg font-extrabold">Plan<span className="text-yellow-500"> History</span></h1>
+        </div>
+        <span className="text-xs text-gray-500 font-mono">{plans.length} plan{plans.length !== 1 ? 's' : ''} generated</span>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-4 md:px-6 py-6">
+        {plans.length === 0 ? (
+          <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-2xl p-12 text-center">
+            <div className="text-4xl mb-3">📋</div>
+            <p className="text-gray-400">No plans generated yet. Go to your dashboard to generate your first plan.</p>
+            <button onClick={() => router.push('/dashboard')} className="mt-4 px-5 py-2 bg-yellow-500 text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors text-sm">
+              Go to Dashboard
+            </button>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-3 gap-6">
+            {/* Plan list sidebar */}
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500 uppercase tracking-widest font-mono mb-3">Generated Plans</p>
+              {plans.map((plan, i) => {
+                const date = new Date(plan.generated_at)
+                const isActive = plan.id === activePlan
+                const weekNum = plan.plan_week || (plans.length - i)
+                return (
+                  <button
+                    key={plan.id}
+                    onClick={() => setActivePlan(plan.id)}
+                    className={`w-full text-left p-4 rounded-xl border transition-all ${
+                      isActive
+                        ? 'border-yellow-500/50 bg-yellow-500/5'
+                        : 'border-[#222230] bg-[#17171f] hover:border-yellow-500/20'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-white">
+                          Week {weekNum}
+                        </p>
+                        <p className="text-xs text-gray-500 font-mono mt-0.5">
+                          {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </p>
+                      </div>
+                      {i === 0 && (
+                        <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded font-bold font-mono">LATEST</span>
+                      )}
+                    </div>
+                    <div className="mt-2 flex gap-2 text-xs font-mono text-gray-400">
+                      <span>{plan.plan_json?.daily_macros?.calories ?? '?'} kcal</span>
+                      <span>·</span>
+                      <span>{plan.plan_json?.daily_macros?.protein_g ?? '?'}g P</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Plan detail */}
+            {selected && (
+              <div className="md:col-span-2 space-y-4">
+                <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="font-bold text-white">
+                      Week {selected.plan_week || plans.findIndex(p => p.id === selected.id) + 1} Details
+                    </h2>
+                    <span className="text-xs text-gray-500 font-mono">
+                      {new Date(selected.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    </span>
+                  </div>
+
+                  {/* Macros */}
+                  {selected.plan_json?.daily_macros && (
+                    <div className="grid grid-cols-4 gap-3 mb-5">
+                      {[
+                        { label: 'Calories', value: selected.plan_json.daily_macros.calories, unit: 'kcal', color: 'text-yellow-400' },
+                        { label: 'Protein', value: selected.plan_json.daily_macros.protein_g, unit: 'g', color: 'text-green-400' },
+                        { label: 'Carbs', value: selected.plan_json.daily_macros.carbs_g, unit: 'g', color: 'text-blue-400' },
+                        { label: 'Fat', value: selected.plan_json.daily_macros.fat_g, unit: 'g', color: 'text-orange-400' },
+                      ].map(m => (
+                        <div key={m.label} className="bg-[#0c0c10] rounded-xl p-3 text-center border border-[#222230]">
+                          <p className={`text-xl font-extrabold ${m.color}`}>{m.value}</p>
+                          <p className="text-[10px] text-gray-500 font-mono">{m.unit}</p>
+                          <p className="text-[10px] text-gray-600 uppercase tracking-wider">{m.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Workout info */}
+                  {selected.plan_json?.workout_plan && (
+                    <div className="bg-[#0c0c10] border border-[#222230] rounded-xl p-4 mb-4">
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-mono mb-2">Workout Split</p>
+                      <p className="text-white font-semibold">
+                        {selected.plan_json.workout_plan.split ||
+                          (Array.isArray(selected.plan_json.workout_plan.sessions)
+                            ? `${selected.plan_json.workout_plan.sessions.length}-day split`
+                            : 'Custom Split')}
+                      </p>
+                      <p className="text-sm text-gray-400 mt-1">
+                        {selected.plan_json.workout_plan.days_per_week ||
+                          (Array.isArray(selected.plan_json.workout_plan.sessions)
+                            ? selected.plan_json.workout_plan.sessions.length
+                            : '5')} days / week
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Meal day preview */}
+                  {selected.plan_json?.weekly_meals?.[0] && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wider font-mono mb-3">Day 1 Meals Preview</p>
+                      <div className="space-y-2">
+                        {selected.plan_json.weekly_meals[0].meals?.slice(0, 3).map((meal: any, i: number) => (
+                          <div key={i} className="flex justify-between items-center py-2 border-b border-[#222230]/50 text-sm">
+                            <div>
+                              <span className="text-gray-200">{meal.name}</span>
+                              <span className="text-gray-500 text-xs ml-2 font-mono">{meal.time}</span>
+                            </div>
+                            <span className="text-yellow-500 font-mono text-xs">{meal.kcal} kcal</span>
+                          </div>
+                        ))}
+                        {(selected.plan_json.weekly_meals[0].meals?.length ?? 0) > 3 && (
+                          <p className="text-xs text-gray-500 text-center pt-1">
+                            + {selected.plan_json.weekly_meals[0].meals.length - 3} more meals…
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ✅ THE FIX: Navigate to the week view with this specific plan's ID */}
+                <button
+                  onClick={() => viewPlan(selected.id)}
+                  className="w-full py-3 bg-yellow-500 text-black font-extrabold rounded-xl hover:bg-yellow-400 transition-colors"
+                >
+                  View Full Week {selected.plan_week || plans.findIndex(p => p.id === selected.id) + 1} Plan →
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}
+</file>
+
+<file path="app/dashboard/plans/page.tsx">
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
+
+interface Scan { id: string; scan_date: string; body_fat_percent: number | null; weight_kg: number | null; waist_inches: number | null; visceral_fat: number | null; }
+interface Profile { body_fat_percent: number; weight_kg: number; target_bf_percent: number; timeframe_weeks: number; primary_goal: string; name: string; }
+
+function StatCard({ label, value, unit, delta, deltaLabel }: any) {
+  const isGood = delta != null && delta < 0
+  const isNeutral = delta == null || delta === 0
+  return (
+    <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 flex flex-col gap-1 transition-all hover:border-yellow-500/30">
+      <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">{label}</p>
+      <p className="text-3xl font-extrabold text-white">
+        {value}<span className="text-sm font-normal text-gray-400 ml-1">{unit}</span>
+      </p>
+      {delta != null && (
+        <p className={`text-xs font-mono mt-2 flex items-center gap-1 ${isGood ? 'text-green-400' : isNeutral ? 'text-gray-500' : 'text-red-400'}`}>
+          <span className={`px-1.5 py-0.5 rounded-md ${isGood ? 'bg-green-400/10' : isNeutral ? 'bg-gray-500/10' : 'bg-red-400/10'}`}>
+            {delta > 0 ? '↑' : delta < 0 ? '↓' : ''} {Math.abs(delta).toFixed(1)}
+          </span>
+          <span className="text-gray-500">{deltaLabel}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-[#0c0c10]/90 backdrop-blur-md border border-[#222230] rounded-xl p-4 shadow-2xl">
+      <p className="text-gray-400 mb-2 font-mono text-xs uppercase tracking-wider border-b border-[#222230] pb-2">{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.name} style={{ color: p.color }} className="font-bold text-lg">
+          {p.name}: {p.value?.toFixed(1)}{p.name.includes('BF') ? '%' : p.name.includes('Waist') ? '"' : ' kg'}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+export default function ProgressPage() {
+  const router = useRouter()
+  const [scans, setScans] = useState<Scan[]>([])
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [activeMetric, setActiveMetric] = useState<'bf' | 'weight' | 'waist'>('weight')
+
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [weight, setWeight] = useState('')
+  const [bf, setBf] = useState('')
+  const [waist, setWaist] = useState('')
+  const [vf, setVf] = useState('')
+  
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [showForm, setShowForm] = useState(false)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  useEffect(() => { fetchData() }, [])
+
+  const fetchData = async () => {
+    setLoading(true)
+    try {
+      const [scansRes, meRes] = await Promise.all([fetch('/api/scans'), fetch('/api/me')])
+      if (!scansRes.ok || !meRes.ok) { router.push('/login'); return }
+      const { scans } = await scansRes.json()
+      const { user } = await meRes.json()
+      setScans(scans || [])
+      setProfile(user?.profile || null)
+      if (scans && scans.length > 0 && scans[0].body_fat_percent) setActiveMetric('bf')
+    } catch { setError('Failed to load data') } 
+    finally { setLoading(false) }
+  }
+
+  const addScan = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true); setError(null); setSuccessMsg(null)
+    try {
+      const res = await fetch('/api/scans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scan_date: date, weight_kg: weight ? parseFloat(weight) : null,
+          body_fat_percent: bf ? parseFloat(bf) : null, waist_inches: waist ? parseFloat(waist) : null,
+          visceral_fat: vf ? parseFloat(vf) : null,
+        }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to save scan')
+      
+      setWeight(''); setBf(''); setWaist(''); setVf(''); setShowForm(false)
+      setSuccessMsg('✅ Scan saved successfully!')
+      setTimeout(() => setSuccessMsg(null), 3000)
+      await fetchData()
+    } catch (err: any) { setError(err.message || 'Error saving scan.') } 
+    finally { setSubmitting(false) }
+  }
+
+  const chartData = scans.map(s => ({
+    date: new Date(s.scan_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+    bf: s.body_fat_percent, weight: s.weight_kg, waist: s.waist_inches,
+  }))
+
+  const latest = scans[scans.length - 1]
+  const first = scans[0]
+  const bfDelta = (latest?.body_fat_percent && first?.body_fat_percent) ? latest.body_fat_percent - first.body_fat_percent : null
+  const weightDelta = (latest?.weight_kg && first?.weight_kg) ? latest.weight_kg - first.weight_kg : null
+  const waistDelta = (latest?.waist_inches && first?.waist_inches) ? latest.waist_inches - first.waist_inches : null
+
+  const metricConfig = {
+    bf: { key: 'bf', color: '#eab308', name: 'Body Fat %', target: profile?.target_bf_percent },
+    weight: { key: 'weight', color: '#3b82f6', name: 'Weight (kg)', target: undefined },
+    waist: { key: 'waist', color: '#a855f7', name: 'Waist (in)', target: undefined },
+  }
+  const mc = metricConfig[activeMetric]
+
+  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Loading telemetry...</div>
+
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white pb-20">
+      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-xl z-20">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500 transition-colors">← Dashboard</button>
+          <span className="text-gray-600">/</span>
+          <h1 className="text-lg font-extrabold">Progress<span className="text-yellow-500"> Tracker</span></h1>
+        </div>
+        <button onClick={() => setShowForm(!showForm)} className={`px-4 py-2 font-bold text-sm rounded-full transition-all ${showForm ? 'bg-[#17171f] text-white border border-[#222230]' : 'bg-yellow-500 text-black hover:bg-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.2)]'}`}>
+          {showForm ? 'Cancel' : '+ Log Weekly Scan'}
+        </button>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-4 md:px-6 py-8 space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
+        {successMsg && <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-green-400 text-sm font-mono text-center">{successMsg}</div>}
+
+        {/* LOG NEW SCAN FORM */}
+        {showForm && (
+          <div className="bg-[#121218] border border-yellow-500/50 rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold mb-6 text-yellow-500 flex items-center gap-2"><span>📏</span> Log Body Metrics</h2>
+            {error && <p className="text-red-400 text-sm mb-4 font-mono bg-red-500/10 p-3 rounded-lg">{error}</p>}
+            <form onSubmit={addScan} className="space-y-5">
+              <div>
+                <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Scan Date</label>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" required disabled={submitting} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Weight (kg)</label>
+                  <input type="number" step="0.1" value={weight} onChange={e => setWeight(e.target.value)} placeholder={profile?.weight_kg?.toString() ?? '74.5'} className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Body Fat %</label>
+                  <input type="number" step="0.1" value={bf} onChange={e => setBf(e.target.value)} placeholder={profile?.body_fat_percent?.toString() ?? '16.5'} className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Waist (in)</label>
+                  <input type="number" step="0.1" value={waist} onChange={e => setWaist(e.target.value)} placeholder="32.0" className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 font-mono uppercase tracking-wider">Visceral Fat</label>
+                  <input type="number" step="0.1" value={vf} onChange={e => setVf(e.target.value)} placeholder="8.0" className="w-full mt-1.5 p-3.5 bg-[#0c0c10] border border-[#222230] rounded-xl text-white focus:border-yellow-500 outline-none" disabled={submitting} />
+                </div>
+              </div>
+              <button type="submit" disabled={submitting} className="w-full py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-xl hover:bg-yellow-400 transition-all shadow-[0_0_15px_rgba(234,179,8,0.3)] disabled:opacity-50 mt-2">
+                {submitting ? 'Saving to Vault...' : 'Save Scan Data'}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* STATS GRID */}
+        {scans.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="Body Fat" value={latest.body_fat_percent?.toFixed(1) ?? '—'} unit="%" delta={bfDelta} deltaLabel="since start" />
+            <StatCard label="Weight" value={latest.weight_kg?.toFixed(1) ?? '—'} unit="kg" delta={weightDelta} deltaLabel="since start" />
+            <StatCard label="Waist" value={latest.waist_inches?.toFixed(1) ?? '—'} unit="in" delta={waistDelta} deltaLabel="since start" />
+            <StatCard label="Total Scans" value={scans.length} unit="logs" />
+          </div>
+        ) : (
+          <div className="bg-[#17171f] border border-dashed border-[#222230] rounded-3xl p-12 text-center">
+            <div className="text-5xl mb-4 opacity-50">📊</div>
+            <h3 className="text-xl font-bold text-white mb-2">No Data Yet</h3>
+            <p className="text-gray-400 text-sm leading-relaxed max-w-sm mx-auto">Log your first body scan to unlock intelligent charts and see your recomp progress over time.</p>
+          </div>
+        )}
+
+        {/* CHART */}
+        {chartData.length >= 2 && (
+          <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-6 shadow-xl">
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+              <h2 className="font-bold text-white text-lg flex items-center gap-2"><span>📈</span> Trajectory</h2>
+              <div className="flex bg-[#0c0c10] p-1 rounded-xl border border-[#222230]">
+                {(['weight', 'bf', 'waist'] as const).map(m => (
+                  <button key={m} onClick={() => setActiveMetric(m)} className={`text-xs px-4 py-2 rounded-lg font-bold transition-all ${activeMetric === m ? 'bg-[#222230] text-white shadow-md' : 'text-gray-500 hover:text-gray-300'}`}>
+                    {m === 'bf' ? 'Body Fat %' : m === 'weight' ? 'Weight' : 'Waist'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#222230" vertical={false} />
+                  <XAxis dataKey="date" stroke="#6b6b7e" fontSize={10} tick={{ fill: '#6b6b7e' }} tickMargin={10} axisLine={false} tickLine={false} />
+                  <YAxis stroke="#6b6b7e" fontSize={10} tick={{ fill: '#6b6b7e' }} domain={['auto', 'auto']} axisLine={false} tickLine={false} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#222230', strokeWidth: 2 }} />
+                  {mc.target != null && (
+                    <ReferenceLine y={mc.target} stroke={mc.color} strokeDasharray="6 4" strokeOpacity={0.4} label={{ value: `Goal: ${mc.target}`, fill: mc.color, fontSize: 10, position: 'insideTopRight' }} />
+                  )}
+                  <Line type="monotone" dataKey={mc.key} stroke={mc.color} strokeWidth={3} dot={{ fill: '#0c0c10', stroke: mc.color, strokeWidth: 2, r: 5 }} activeDot={{ r: 8, fill: mc.color, stroke: '#0c0c10', strokeWidth: 3 }} name={mc.name} animationDuration={1000} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}
+</file>
+
+<file path="app/dashboard/subscriptions/page.tsx">
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+export default function SubscriptionsPage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [profile, setProfile] = useState<any>(null)
+  const [buying, setBuying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+
+  useEffect(() => { loadProfile() }, [])
+
+  const loadProfile = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/me')
+      if (!res.ok) { router.push('/login'); return }
+      const { user } = await res.json()
+      setProfile(user?.profile || null)
+    } catch { setError('Failed to load profile') } 
+    finally { setLoading(false) }
+  }
+
+  const buyWeek = async () => {
+    setBuying(true); setError(null); setSuccess(false)
+    try {
+      // Simulated Payment Gateway Delay
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      
+      const res = await fetch('/api/subscription', { method: 'POST' })
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Payment gateway failed')
+      
+      await loadProfile()
+      setSuccess(true)
+    } catch (err: any) { setError(err.message) } 
+    finally { setBuying(false) }
+  }
+
+  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Securing connection...</div>
+
+  const nextWeek = (profile?.paid_weeks ?? 1) + 1
+
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white">
+      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-xl z-20">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500 transition-colors">← Dashboard</button>
+          <span className="text-gray-600">/</span>
+          <h1 className="text-lg font-extrabold">Billing & <span className="text-yellow-500">Unlocks</span></h1>
+        </div>
+      </header>
+
+      <main className="max-w-2xl mx-auto px-4 md:px-6 py-8 space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-500">
+        
+        {/* CURRENT STATUS */}
+        <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-6 md:p-8 text-center shadow-xl">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10 mb-4">
+            <span className="text-3xl">🛡️</span>
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-2">Account Active</h2>
+          <p className="text-gray-400">You currently have full access to <span className="text-yellow-400 font-mono font-bold">Week {profile?.paid_weeks ?? 1}</span>.</p>
+          <div className="mt-6 bg-[#0c0c10] rounded-full h-2 border border-[#222230] overflow-hidden">
+            <div className="bg-gradient-to-r from-green-500 to-yellow-500 h-full w-full"></div>
+          </div>
+        </div>
+
+        {/* UPGRADE CARD */}
+        <div className="bg-gradient-to-br from-[#1c1c26] to-[#121218] border border-yellow-500/30 rounded-3xl p-6 md:p-8 shadow-[0_0_30px_rgba(234,179,8,0.05)] relative overflow-hidden">
+          <div className="absolute top-0 right-0 bg-yellow-500 text-black text-[10px] font-extrabold uppercase tracking-widest px-4 py-1 rounded-bl-xl">Next Step</div>
+          
+          <h2 className="text-2xl font-bold text-white mb-1">Unlock Week {nextWeek}</h2>
+          <p className="text-sm text-gray-400 mb-6">Continuous progression requires continuous recalculation.</p>
+
+          <div className="space-y-4 mb-8">
+            {[
+              "AI recalculates your TDEE based on your new weight.",
+              "Macronutrient ratios adjusted to break plateaus.",
+              "Fresh 7-day meal plan with new recipes & variety.",
+              "Next progression step unlocked in your workout split."
+            ].map((feature, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <span className="text-yellow-500 mt-0.5">✓</span>
+                <span className="text-sm text-gray-300 leading-relaxed">{feature}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-end gap-2 mb-6 border-t border-[#222230] pt-6">
+            <span className="text-4xl font-extrabold text-white">₹299</span>
+            <span className="text-sm text-gray-500 font-mono mb-1">/ week</span>
+          </div>
+
+          {error && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl text-center">{error}</div>}
+          {success && <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-xl text-center font-bold">🎉 Payment Successful! Week {nextWeek} Unlocked.</div>}
+
+          <button onClick={buyWeek} disabled={buying || success} className="w-full py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-xl hover:bg-yellow-400 transition-all shadow-[0_0_15px_rgba(234,179,8,0.2)] disabled:opacity-50 disabled:shadow-none flex justify-center items-center gap-2">
+            {buying ? <span className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></span> : success ? 'Redirecting...' : `Pay Securely to Unlock`}
+          </button>
+          
+          <p className="text-center text-[10px] text-gray-500 mt-4 uppercase tracking-widest font-mono">🔒 256-bit Encrypted Checkout</p>
+        </div>
+      </main>
+    </div>
+  )
+}
+</file>
+
 <file path="app/layout.tsx">
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
@@ -3039,6 +3050,13 @@ next-env.d.ts
 }
 </file>
 
+<file path="supabase/config.toml">
+[functions.generate-plan]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/generate-plan/index.ts"
+</file>
+
 <file path="app/api/meal-plan/route.ts">
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
@@ -3049,9 +3067,10 @@ import { hashToken } from '@/lib/otp'
 const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
 
 // ─────────────────────────────────────────────
-// GET  /api/meal-plan  — fetch the latest saved plan
+// GET  /api/meal-plan          — fetch the latest saved plan
+// GET  /api/meal-plan?id=uuid  — fetch a specific plan by ID
 // ─────────────────────────────────────────────
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const cookieStore = await cookies()
     const authToken = cookieStore.get('auth-token')?.value
@@ -3074,13 +3093,23 @@ export async function GET() {
       return res
     }
 
-    const { data: planRow, error: planError } = await supabaseAdmin
+    const url = new URL(req.url)
+    const planId = url.searchParams.get('id')
+
+    let query = supabaseAdmin
       .from('meal_plans')
-      .select('plan_json, generated_at')
+      .select('id, plan_json, generated_at, plan_week')
       .eq('user_id', session.user_id)
-      .order('generated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+
+    if (planId) {
+      // Fetch a specific plan by ID — also verify it belongs to this user
+      query = query.eq('id', planId)
+    } else {
+      // Fetch the latest plan
+      query = query.order('generated_at', { ascending: false }).limit(1)
+    }
+
+    const { data: planRow, error: planError } = await query.maybeSingle()
 
     if (planError) {
       console.error('Plan fetch error:', planError)
@@ -3090,8 +3119,15 @@ export async function GET() {
     if (!planRow) return NextResponse.json({ plan: null })
 
     const planJson = planRow.plan_json || {}
-    const planWeek = planJson.plan_week ?? null
-    return NextResponse.json({ plan: { ...planJson, plan_week: planWeek, generated_at: planRow.generated_at } })
+    const planWeek = planRow.plan_week ?? planJson.plan_week ?? null
+    return NextResponse.json({
+      plan: {
+        ...planJson,
+        plan_week: planWeek,
+        plan_id: planRow.id,
+        generated_at: planRow.generated_at,
+      }
+    })
   } catch (error) {
     console.error('GET /api/meal-plan error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -3174,7 +3210,6 @@ export async function POST(req: Request) {
 
     if (!edgeRes.ok) {
       console.error('Edge function error:', edgeRes.status, edgeData)
-      // TEMPORARY – show the real error in the browser
       return NextResponse.json(
         { error: edgeData?.error || 'Plan generation failed', details: edgeData },
         { status: edgeRes.status }
@@ -3192,8 +3227,8 @@ export async function POST(req: Request) {
 <file path="app/dashboard/week/page.tsx">
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
 
 // ── Types & Helper Components ──
 interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
@@ -3267,16 +3302,22 @@ function normalizeSession(raw: any) {
   return { day: raw.day || raw.Day || 'Training Day', name: raw.name || raw.type || raw.Type || 'Session', focus: raw.focus || raw.Focus || 'Training', exercises: ensureArray(raw.exercises ?? raw.Exercises).map(normalizeExercise) };
 }
 
-function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
+function MealCard({ meal, mealIndex, today, todayLogs, onToggle, isHistorical }: any) {
   const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
   const eaten = log?.eaten ?? false
 
   return (
-    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
+    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${
+      isHistorical
+        ? 'bg-[#17171f] border-[#222230]'
+        : eaten
+          ? 'bg-green-500/5 border-green-500/20'
+          : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'
+    }`}>
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1">
           <span className="text-xs text-[#6b6b7e] uppercase tracking-[2px] font-mono bg-[#222230] px-2.5 py-1 rounded">{meal.time}</span>
-          <h3 className={`text-xl font-bold mt-2 ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
+          <h3 className={`text-xl font-bold mt-2 ${!isHistorical && eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
         </div>
         <div className="flex items-center gap-3 ml-4">
           <div className="text-right">
@@ -3284,7 +3325,15 @@ function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
             <span className="text-sm text-gray-500"> kcal</span>
             <p className="text-xs text-green-400 font-mono mt-1">{meal.protein_g}g protein</p>
           </div>
-          <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400 scale-105' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>{eaten ? '✓' : '○'}</button>
+          {/* Only show the eaten toggle for the current (non-historical) plan */}
+          {!isHistorical && (
+            <button
+              onClick={() => onToggle(mealIndex, meal.name, !eaten)}
+              className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400 scale-105' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}
+            >
+              {eaten ? '✓' : '○'}
+            </button>
+          )}
         </div>
       </div>
       <div className="space-y-2">
@@ -3301,13 +3350,23 @@ function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
           </div>
         ))}
       </div>
-      {meal.tip && <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong></div>}
+      {meal.tip && (
+        <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">
+          💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong>
+        </div>
+      )}
     </div>
   )
 }
 
-export default function WeekPlanPage() {
+// ── Inner page that uses useSearchParams (must be inside Suspense) ──
+function WeekPlanContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // If a planId is in the URL, we're viewing a historical plan
+  const planId = searchParams.get('planId')
+  const isHistorical = !!planId
+
   const [plan, setPlan] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [activeDay, setActiveDay] = useState(0)
@@ -3319,16 +3378,41 @@ export default function WeekPlanPage() {
   useEffect(() => {
     if (plan && plan.weekly_meals) {
       const daysArray = ensureArray(plan.weekly_meals)
-      const todayIndex = daysArray.findIndex((day: any) => getDayName(day).toLowerCase() === todayDayName.toLowerCase())
-      if (todayIndex !== -1) setActiveDay(todayIndex)
-      else setActiveDay(0) 
+      if (!isHistorical) {
+        // For the current plan, default to today's day
+        const todayIndex = daysArray.findIndex((day: any) => getDayName(day).toLowerCase() === todayDayName.toLowerCase())
+        if (todayIndex !== -1) setActiveDay(todayIndex)
+        else setActiveDay(0)
+      } else {
+        // For historical plans, default to Day 1
+        setActiveDay(0)
+      }
     }
-  }, [plan, todayDayName])
+  }, [plan, todayDayName, isHistorical])
 
-  useEffect(() => { fetchPlan(); fetchTodayLogs() }, [])
+  useEffect(() => {
+    fetchPlan()
+    if (!isHistorical) fetchTodayLogs()
+  }, [planId])
 
-  const fetchPlan = async () => { try { const res = await fetch('/api/meal-plan'); if (!res.ok) return; const data = await res.json(); setPlan(data.plan || null) } catch {} finally { setLoading(false) } }
-  const fetchTodayLogs = async () => { try { const res = await fetch(`/api/food-log?date=${today}`); if (res.ok) setTodayLogs((await res.json()).logs || []) } catch {} }
+  const fetchPlan = async () => {
+    try {
+      // If planId is provided, fetch that specific plan; otherwise fetch the latest
+      const url = planId ? `/api/meal-plan?id=${planId}` : '/api/meal-plan'
+      const res = await fetch(url)
+      if (!res.ok) return
+      const data = await res.json()
+      setPlan(data.plan || null)
+    } catch {}
+    finally { setLoading(false) }
+  }
+
+  const fetchTodayLogs = async () => {
+    try {
+      const res = await fetch(`/api/food-log?date=${today}`)
+      if (res.ok) setTodayLogs((await res.json()).logs || [])
+    } catch {}
+  }
 
   const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
     setTodayLogs(prev => {
@@ -3336,11 +3420,31 @@ export default function WeekPlanPage() {
       if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
       return [...prev, { plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }]
     })
-    try { await fetch('/api/food-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }) }) } catch {}
+    try {
+      await fetch('/api/food-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten })
+      })
+    } catch {}
   }
 
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">Loading plan...</div>
-  if (!plan) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center"><div className="text-center"><p className="text-gray-400 mb-4">No plan found</p><button onClick={() => router.push('/dashboard')} className="px-4 py-2 bg-yellow-500 text-black rounded-lg">← Back to Dashboard</button></div></div>
+  if (loading) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">
+      Loading plan...
+    </div>
+  )
+
+  if (!plan) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">
+      <div className="text-center">
+        <p className="text-gray-400 mb-4">No plan found</p>
+        <button onClick={() => router.push('/dashboard')} className="px-4 py-2 bg-yellow-500 text-black rounded-lg">
+          ← Back to Dashboard
+        </button>
+      </div>
+    </div>
+  )
 
   const days = ensureArray(plan.weekly_meals)
   const currentDay = days[activeDay] || {}
@@ -3351,17 +3455,40 @@ export default function WeekPlanPage() {
       <div className="mb-4 flex overflow-x-auto gap-2 pb-2">
         {days.map((day: any, idx: number) => {
           const dayStr = getDayName(day)
-          const isDayToday = dayStr.toLowerCase() === todayDayName.toLowerCase()
+          const isDayToday = !isHistorical && dayStr.toLowerCase() === todayDayName.toLowerCase()
           return (
-            <button key={idx} onClick={() => setActiveDay(idx)} className={`px-4 py-2 rounded-full font-semibold text-sm whitespace-nowrap transition-all relative ${idx === activeDay ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/20' : 'bg-[#17171f] text-gray-400 border border-[#222230] hover:border-yellow-500'}`}>
+            <button
+              key={idx}
+              onClick={() => setActiveDay(idx)}
+              className={`px-4 py-2 rounded-full font-semibold text-sm whitespace-nowrap transition-all relative ${
+                idx === activeDay
+                  ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/20'
+                  : 'bg-[#17171f] text-gray-400 border border-[#222230] hover:border-yellow-500'
+              }`}
+            >
               {dayStr}
-              {isDayToday && <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full border border-[#0c0c10]" />}
+              {isDayToday && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full border border-[#0c0c10]" />
+              )}
             </button>
           )
         })}
       </div>
       <div className="pb-8 space-y-4">
-        {meals.length > 0 ? meals.map((meal, i) => <MealCard key={i} meal={meal} mealIndex={i} today={today} todayLogs={todayLogs} onToggle={toggleMealEaten} />) : <p className="text-gray-400 text-center py-8 border border-dashed border-[#222230] rounded-2xl">No meals planned for this day.</p>}
+        {meals.length > 0
+          ? meals.map((meal, i) => (
+              <MealCard
+                key={i}
+                meal={meal}
+                mealIndex={i}
+                today={today}
+                todayLogs={todayLogs}
+                onToggle={toggleMealEaten}
+                isHistorical={isHistorical}
+              />
+            ))
+          : <p className="text-gray-400 text-center py-8 border border-dashed border-[#222230] rounded-2xl">No meals planned for this day.</p>
+        }
       </div>
     </div>
   )
@@ -3373,17 +3500,27 @@ export default function WeekPlanPage() {
       <div className="space-y-6 pb-8">
         <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
           <h2 className="text-lg font-bold text-yellow-500 mb-2 font-mono uppercase tracking-wide">Split Overview</h2>
-          <p className="text-sm text-gray-300 leading-relaxed"><strong>Training Schedule:</strong> {workout.split || workout.frequency || 'Custom Split'} <br /><strong>Philosophy:</strong> {workout.philosophy || 'Follow progressive overload and prioritize form over weight.'}</p>
+          <p className="text-sm text-gray-300 leading-relaxed">
+            <strong>Training Schedule:</strong> {workout.split || workout.frequency || 'Custom Split'}{' '}
+            <br /><strong>Philosophy:</strong> {workout.philosophy || 'Follow progressive overload and prioritize form over weight.'}
+          </p>
         </div>
         <div className="grid md:grid-cols-2 gap-4">
           {sessions.map((session: any, idx: number) => (
             <div key={idx} className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 hover:border-yellow-500/25 transition-all">
-              <h3 className="text-lg font-bold text-white mb-1 border-b border-[#222230] pb-2 font-mono">{session.day}: {session.name || session.type}</h3>
+              <h3 className="text-lg font-bold text-white mb-1 border-b border-[#222230] pb-2 font-mono">
+                {session.day}: {session.name || session.type}
+              </h3>
               <p className="text-xs text-yellow-500 uppercase tracking-widest font-mono mb-4">{session.focus}</p>
               <div className="space-y-4">
                 {ensureArray(session.exercises).map((ex: any, i: number) => (
                   <div key={i} className="text-sm flex flex-col border-b border-[#222230]/50 pb-3 last:border-b-0 last:pb-0">
-                    <div className="flex justify-between items-start"><span className="font-semibold text-gray-200">{ex.name}</span><span className="text-yellow-500 font-mono text-xs bg-yellow-500/10 px-2 py-0.5 rounded whitespace-nowrap">{ex.sets}s × {ex.reps}r</span></div>
+                    <div className="flex justify-between items-start">
+                      <span className="font-semibold text-gray-200">{ex.name}</span>
+                      <span className="text-yellow-500 font-mono text-xs bg-yellow-500/10 px-2 py-0.5 rounded whitespace-nowrap">
+                        {ex.sets}s × {ex.reps}r
+                      </span>
+                    </div>
                     {ex.tip && <span className="text-xs text-gray-400 mt-1 italic">💡 {ex.tip}</span>}
                   </div>
                 ))}
@@ -3400,21 +3537,61 @@ export default function WeekPlanPage() {
     return (
       <div className="space-y-6 pb-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center"><p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Sleep Target</p><p className="text-xl font-extrabold text-blue-400">{rules.sleep_hours || '7-8 hours'}</p></div>
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center"><p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Water</p><p className="text-xl font-extrabold text-cyan-400">{rules.water_liters || rules.water_target || '3.5 L'}</p></div>
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center"><p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Steps</p><p className="text-xl font-extrabold text-green-400">{typeof rules.steps_daily === 'number' ? rules.steps_daily.toLocaleString() : (rules.daily_steps || rules.steps_target || '10,000')}</p></div>
+          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Sleep Target</p>
+            <p className="text-xl font-extrabold text-blue-400">{rules.sleep_hours || '7-8 hours'}</p>
+          </div>
+          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Water</p>
+            <p className="text-xl font-extrabold text-cyan-400">{rules.water_liters || rules.water_target || '3.5 L'}</p>
+          </div>
+          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Steps</p>
+            <p className="text-xl font-extrabold text-green-400">
+              {typeof rules.steps_daily === 'number'
+                ? rules.steps_daily.toLocaleString()
+                : (rules.daily_steps || rules.steps_target || '10,000')}
+            </p>
+          </div>
         </div>
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
             <h3 className="text-lg font-bold text-red-400 mb-3 font-mono border-b border-[#222230] pb-2">Foods to Avoid</h3>
-            <ul className="list-disc pl-5 text-sm text-gray-300 space-y-2">{ensureArray(rules.avoid_list).map((item: string, i: number) => <li key={i} className="leading-relaxed">{item}</li>)}</ul>
+            <ul className="list-disc pl-5 text-sm text-gray-300 space-y-2">
+              {ensureArray(rules.avoid_list).map((item: string, i: number) => (
+                <li key={i} className="leading-relaxed">{item}</li>
+              ))}
+            </ul>
           </div>
           <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
             <h3 className="text-lg font-bold text-yellow-500 mb-3 font-mono border-b border-[#222230] pb-2">Guidelines & Protocols</h3>
             <div className="space-y-4">
-              {rules.refeed_day && <div><h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono">Refeed Strategy</h4><p className="text-sm text-gray-200 mt-1 leading-relaxed">{rules.refeed_day}</p></div>}
-              {rules.stress_management && <div><h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Stress Management</h4><ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">{ensureArray(rules.stress_management).map((tip: string, i: number) => <li key={i} className="leading-relaxed">{tip}</li>)}</ul></div>}
-              {rules.recovery_tips && <div><h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Recovery Protocols</h4><ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">{ensureArray(rules.recovery_tips).map((tip: string, i: number) => <li key={i} className="leading-relaxed">{tip}</li>)}</ul></div>}
+              {rules.refeed_day && (
+                <div>
+                  <h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono">Refeed Strategy</h4>
+                  <p className="text-sm text-gray-200 mt-1 leading-relaxed">{rules.refeed_day}</p>
+                </div>
+              )}
+              {rules.stress_management && (
+                <div>
+                  <h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Stress Management</h4>
+                  <ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">
+                    {ensureArray(rules.stress_management).map((tip: string, i: number) => (
+                      <li key={i} className="leading-relaxed">{tip}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {rules.recovery_tips && (
+                <div>
+                  <h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Recovery Protocols</h4>
+                  <ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">
+                    {ensureArray(rules.recovery_tips).map((tip: string, i: number) => (
+                      <li key={i} className="leading-relaxed">{tip}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3422,24 +3599,80 @@ export default function WeekPlanPage() {
     )
   }
 
+  const planWeekNum = plan.plan_week
+
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white">
       <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
         <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500">← Dashboard</button>
+          <button
+            onClick={() => isHistorical ? router.push('/dashboard/history') : router.push('/dashboard')}
+            className="text-sm text-gray-400 hover:text-yellow-500"
+          >
+            ← {isHistorical ? 'History' : 'Dashboard'}
+          </button>
           <span className="text-gray-600">/</span>
-          <h1 className="text-lg font-extrabold">Week Plan</h1>
+          <h1 className="text-lg font-extrabold">
+            {planWeekNum ? `Week ${planWeekNum} ` : ''}Plan
+          </h1>
+          {isHistorical && (
+            <span className="text-xs bg-[#222230] text-gray-400 px-2 py-1 rounded font-mono">
+              ARCHIVED
+            </span>
+          )}
         </div>
-        {plan?.generated_at && <div className="text-xs text-gray-500 font-mono">📅 {new Date(plan.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>}
+        <div className="flex items-center gap-3">
+          {isHistorical && (
+            // Quick link to go to current plan
+            <button
+              onClick={() => router.push('/dashboard/week')}
+              className="text-xs bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-3 py-1.5 rounded-full font-mono hover:bg-yellow-500/20 transition-colors"
+            >
+              View Current Plan →
+            </button>
+          )}
+          {plan?.generated_at && (
+            <div className="text-xs text-gray-500 font-mono">
+              📅 {new Date(plan.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </div>
+          )}
+        </div>
       </header>
+
       <main className="max-w-5xl mx-auto px-4 md:px-6 py-6">
+        {/* Historical plan banner */}
+        {isHistorical && (
+          <div className="mb-6 p-4 bg-[#17171f] border border-[#222230] rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📚</span>
+              <div>
+                <p className="font-semibold text-white text-sm">
+                  You're viewing Week {planWeekNum || ''} (archived)
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Meal tracking is only available for the current active plan.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex border-b border-[#222230] mb-6">
           {(['meals', 'workouts', 'lifestyle'] as const).map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3.5 font-bold text-sm transition-all border-b-2 capitalize ${activeTab === tab ? 'border-yellow-500 text-yellow-500 bg-yellow-500/5' : 'border-transparent text-gray-400 hover:text-white'}`}>
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 py-3.5 font-bold text-sm transition-all border-b-2 capitalize ${
+                activeTab === tab
+                  ? 'border-yellow-500 text-yellow-500 bg-yellow-500/5'
+                  : 'border-transparent text-gray-400 hover:text-white'
+              }`}
+            >
               {tab === 'meals' ? '🍽️ Diet Plan' : tab === 'workouts' ? '💪 Workout Split' : '🌙 Lifestyle & Rules'}
             </button>
           ))}
         </div>
+
         {activeTab === 'meals' && renderMealsContent()}
         {activeTab === 'workouts' && renderWorkoutsContent()}
         {activeTab === 'lifestyle' && renderLifestyleContent()}
@@ -3447,468 +3680,17 @@ export default function WeekPlanPage() {
     </div>
   )
 }
-</file>
 
-<file path="supabase/config.toml">
-[functions.generate-plan]
-enabled = true
-verify_jwt = false
-entrypoint = "./functions/generate-plan/index.ts"
-</file>
-
-<file path="app/dashboard/page.tsx">
-'use client'
-
-import { useRouter } from 'next/navigation'
-import { useEffect, useState, useCallback } from 'react'
-
-// -------------------- Types & Helpers --------------------
-interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
-
-function getDayName(d: any): string {
-  let name = String(d?.day_name || d?.day || '');
-  const numMatch = name.match(/^Day\s*(\d+)$/i) || name.match(/^(\d+)$/);
-  if (numMatch) {
-    const dayNum = parseInt(numMatch[1]);
-    if (dayNum >= 1 && dayNum <= 7) return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][dayNum - 1];
-  }
-  return name;
-}
-
-function ensureArray(val: any): any[] {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  return [val];
-}
-
-function parseNum(val: any): number {
-  if (typeof val === 'number') return val;
-  if (!val) return 0;
-  const match = String(val).match(/[\d.]+/);
-  return match ? parseFloat(match[0]) : 0;
-}
-
-// -------------------- Indestructible Normalizers --------------------
-function normalizeFood(raw: any) {
-  if (!raw || typeof raw !== 'object') return { name: String(raw || 'Food item'), quantity: '1 serving', kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 };
-  return {
-    name: raw.name || raw.item || raw.food || raw.Name || 'Food item',
-    quantity: raw.quantity || raw.amount || raw.qty || raw.Quantity || '1 serving',
-    protein_g: parseNum(raw.protein_g ?? raw.protein ?? raw.Protein),
-    carbs_g: parseNum(raw.carbs_g ?? raw.carbs ?? raw.Carbs),
-    fat_g: parseNum(raw.fat_g ?? raw.fat ?? raw.Fat),
-    fiber_g: parseNum(raw.fiber_g ?? raw.fiber ?? raw.Fiber),
-    kcal: parseNum(raw.kcal ?? raw.calories ?? raw.Calories ?? raw.Kcal),
-  };
-}
-
-function normalizeMeal(raw: any, index: number) {
-  if (!raw || typeof raw !== 'object') return { time: `Meal ${index + 1}`, name: String(raw || `Meal ${index + 1}`), kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, foods: [], tip: '' };
-  
-  let foods = ensureArray(raw.foods ?? raw.ingredients ?? raw.items).map(normalizeFood);
-  const name = raw.name || raw.Meal || raw.title || raw.Name || `Meal ${index + 1}`;
-  const kcal = parseNum(raw.kcal ?? raw.calories) || foods.reduce((acc, f) => acc + f.kcal, 0);
-  const protein_g = parseNum(raw.protein_g ?? raw.protein) || foods.reduce((acc, f) => acc + f.protein_g, 0);
-  const carbs_g = parseNum(raw.carbs_g ?? raw.carbs) || foods.reduce((acc, f) => acc + f.carbs_g, 0);
-  const fat_g = parseNum(raw.fat_g ?? raw.fat) || foods.reduce((acc, f) => acc + f.fat_g, 0);
-
-  if (foods.length === 0) foods = [{ name, quantity: '1 serving', protein_g, carbs_g, fat_g, kcal, fiber_g: 0 }];
-  return { time: raw.time || raw.Time || `Meal ${index + 1}`, name, kcal, protein_g, carbs_g, fat_g, foods, tip: raw.tip ?? raw.Tip ?? raw.note ?? '' };
-}
-
-// -------------------- Compact UI Components --------------------
-function CompactMealCard({ meal, mealIndex, todayLogs, onToggle }: any) {
-  const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
-  const eaten = log?.eaten ?? false
-
+// Wrap in Suspense because useSearchParams requires it in Next.js app router
+export default function WeekPlanPage() {
   return (
-    <div className={`flex items-center justify-between p-4 border rounded-2xl mb-3 transition-all ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
-      <div className="flex items-center gap-4 w-full">
-        <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>
-          {eaten ? '✓' : ''}
-        </button>
-        <div className="flex-1">
-          <p className={`text-sm font-bold ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</p>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-[10px] bg-[#222230] text-gray-400 px-2 py-0.5 rounded font-mono">{meal.time}</span>
-            <span className="text-xs text-gray-500 font-mono"><span className="text-yellow-500 font-bold">{meal.kcal}</span> kcal · {meal.protein_g}g P</span>
-          </div>
-        </div>
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">
+        Loading plan...
       </div>
-    </div>
-  )
-}
-
-function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number; streak: number }) {
-  const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
-  const r = 28; const circ = 2 * Math.PI * r; const offset = circ - (pct / 100) * circ;
-  return (
-    <div className="flex items-center gap-4 bg-[#17171f] border border-[#222230] rounded-2xl px-5 py-4">
-      <div className="relative w-14 h-14">
-        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
-          <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
-          <circle cx="35" cy="35" r={r} stroke={pct === 100 ? '#3dd68c' : pct >= 50 ? '#f4a623' : '#60a5fa'} strokeWidth="6" fill="none" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
-        </svg>
-        <span className="absolute inset-0 flex items-center justify-center text-xs font-extrabold font-mono text-white">{pct}%</span>
-      </div>
-      <div>
-        <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">Today's Adherence</p>
-        <p className="text-sm font-bold text-white mt-0.5">{eaten} of {total} meals completed</p>
-        {streak > 0 && <p className="text-xs text-orange-400 font-mono mt-1">🔥 {streak} day streak</p>}
-      </div>
-    </div>
-  )
-}
-
-function MacroRing({ label, consumed, target, color }: { label: string; consumed: number; target: number; color: string }) {
-  const pct = target > 0 ? Math.min(100, Math.round((consumed / target) * 100)) : 0
-  const r = 24; const circ = 2 * Math.PI * r; const offset = circ - (pct / 100) * circ;
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="relative w-16 h-16">
-        <svg className="w-16 h-16 -rotate-90" viewBox="0 0 60 60">
-          <circle cx="30" cy="30" r={r} stroke="#222230" strokeWidth="5" fill="none" />
-          <circle cx="30" cy="30" r={r} stroke={color} strokeWidth="5" fill="none" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.7s ease' }} />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center"><span className="text-[10px] font-extrabold text-white font-mono">{pct}%</span></div>
-      </div>
-      <div className="text-center">
-        <p className="text-[11px] font-bold font-mono" style={{ color }}>{consumed}g</p>
-        <p className="text-[9px] text-gray-500 uppercase tracking-wider font-mono mt-0.5">{label}</p>
-      </div>
-    </div>
-  )
-}
-
-function MacroRings({ plan, todayLogs, todayDayName }: { plan: any; todayLogs: FoodLog[]; todayDayName: string }) {
-  const days = ensureArray(plan?.weekly_meals)
-  const todayDay = days.find((d: any) => getDayName(d).toLowerCase() === todayDayName.toLowerCase())
-  const normalizedMeals = ensureArray(todayDay?.meals).map(normalizeMeal)
-
-  let consumedP = 0, consumedC = 0, consumedF = 0
-  normalizedMeals.forEach((meal, i) => {
-    if (todayLogs.find(l => l.meal_index === i)?.eaten) {
-      meal.foods.forEach((food) => { consumedP += food.protein_g || 0; consumedC += food.carbs_g || 0; consumedF += food.fat_g || 0; })
-    }
-  })
-
-  const targets = plan?.daily_macros || {}
-  return (
-    <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 mb-6 shadow-sm">
-      <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-3">
-        <p className="text-xs text-gray-400 uppercase tracking-widest font-mono">Macro Progress</p>
-        <span className="text-xs text-gray-600 font-mono">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
-      </div>
-      <div className="flex justify-around">
-        <MacroRing label="Protein" consumed={Math.round(consumedP)} target={targets.protein_g || 0} color="#3dd68c" />
-        <MacroRing label="Carbs" consumed={Math.round(consumedC)} target={targets.carbs_g || 0} color="#60a5fa" />
-        <MacroRing label="Fat" consumed={Math.round(consumedF)} target={targets.fat_g || 0} color="#f4a623" />
-      </div>
-    </div>
-  )
-}
-
-// -------------------- FULL SCREEN IMMERSIVE LOADING --------------------
-function GeneratingScreen({ name, week }: { name: string; week: number }) {
-  const [stepIdx, setStepIdx] = useState(0)
-  const formattedName = name ? name.split(' ')[0] : 'your'
-
-  const STEPS = [
-    { icon: '⚖️', label: `Analyzing ${formattedName}'s weekly progress…` },
-    { icon: '🔥', label: `Recalculating macros & targets for Week ${week}…` },
-    { icon: '🥩', label: 'Setting exact food splits (Protein, Carbs, Fats)…' },
-    { icon: '🍱', label: `Structuring 7-day intelligent meal plan…` },
-    { icon: '🏋️', label: `Designing periodized workout split…` },
-    { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
-    { icon: '🚀', label: 'Finalizing AapkaCoach Master Plan…' },
-  ]
-
-  useEffect(() => {
-    const t = setInterval(() => setStepIdx(i => Math.min(i + 1, STEPS.length - 1)), 3500)
-    return () => clearInterval(t)
-  }, [STEPS.length])
-  
-  const s = STEPS[stepIdx]
-  
-  return (
-    <div className="min-h-screen bg-[#0c0c10]/95 backdrop-blur-3xl text-white flex flex-col items-center justify-center gap-6 px-6 fixed inset-0 z-[100]">
-      <div className="text-7xl animate-bounce drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">{s.icon}</div>
-      <div className="text-center max-w-sm">
-        <p className="text-2xl font-bold font-mono text-white leading-relaxed">{s.label}</p>
-        <p className="text-sm text-yellow-500 mt-3 animate-pulse">DeepSeek AI is working. Do not close this tab.</p>
-      </div>
-      
-      <div className="w-full max-w-sm space-y-2.5 mt-8">
-        {STEPS.map((step, i) => (
-          <div key={i} className={`flex items-center gap-3 text-sm font-mono transition-all duration-300 ${i === stepIdx ? 'text-yellow-400 scale-105 origin-left' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
-            <span className="w-5">{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
-            <span className={i === stepIdx ? 'font-bold' : ''}>{step.label}</span>
-          </div>
-        ))}
-      </div>
-      
-      <div className="w-full max-w-sm bg-[#17171f] rounded-full h-2 border border-[#222230] mt-6 overflow-hidden">
-        <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
-      </div>
-    </div>
-  )
-}
-
-// -------------------- MAIN DASHBOARD --------------------
-export default function DashboardPage() {
-  const router = useRouter()
-  const today = new Date().toISOString().split('T')[0]
-  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
-
-  const [plan, setPlan] = useState<any>(null)
-  const [allPlans, setAllPlans] = useState<any[]>([]) // Used to accurately track Week #
-  const [profile, setProfile] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  
-  // Controls the immersive loading screen
-  const [generatingWeek, setGeneratingWeek] = useState<number | null>(null)
-  const [planFeedback, setPlanFeedback] = useState('')
-  
-  const [error, setError] = useState<string | null>(null)
-  const [userName, setUserName] = useState('Athlete')
-
-  const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
-  const [streak, setStreak] = useState(0)
-
-  // Sync state from Database
-  const loadPlan = async () => {
-    setLoading(true); setError(null)
-    try {
-      const res = await fetch('/api/me')
-      if (!res.ok) { router.push('/login'); return }
-      const { user } = await res.json()
-      setUserName(user?.profile?.name || user?.email || 'Athlete')
-      setProfile(user?.profile || null)
-
-      // Fetch the actual current plan JSON
-      const planRes = await fetch('/api/meal-plan')
-      if (planRes.ok) {
-        const data = await planRes.json()
-        setPlan(data.plan || null)
-      } else { setPlan(null) }
-
-      // Fetch all plans to establish perfect week counts
-      const allPlansRes = await fetch('/api/meal-plans')
-      if (allPlansRes.ok) {
-        const data = await allPlansRes.json()
-        setAllPlans(data.plans || [])
-      }
-
-    } catch { setError('Failed to load your dashboard data.') }
-    finally { setLoading(false) }
-  }
-
-  const loadFoodLog = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/food-log?date=${today}`)
-      if (res.ok) { const data = await res.json(); setTodayLogs(data.logs || []); setStreak(data.streak || 0) }
-    } catch { /* silent */ }
-  }, [today])
-
-  useEffect(() => { loadPlan() }, [])
-  useEffect(() => { if (plan) loadFoodLog() }, [plan, loadFoodLog])
-
-  // -------------------- CORE LOGIC --------------------
-  // Calculate exactly which week we are on by counting the Vault records
-  const planWeek = allPlans.length > 0 ? allPlans.length : (plan ? 1 : 0)
-  const paidWeeks = profile?.paid_weeks ?? 1
-  
-  // The roadmap shows up to the next locked week
-  const totalVisibleWeeks = Math.max(planWeek, paidWeeks) + 1
-  const weeksArray = Array.from({ length: totalVisibleWeeks }, (_, i) => i + 1)
-
-  // Extract Dates from the Vault for accurate day counting
-  const latestPlanRecord = allPlans.length > 0 ? allPlans[0] : null;
-  const planStartDate = latestPlanRecord?.generated_at ? new Date(latestPlanRecord.generated_at) : null;
-  const planDayIndex = planStartDate
-    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
-    : 1
-  const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
-
-  const todayMeals = (() => {
-    const days = ensureArray(plan?.weekly_meals)
-    const todayDay = days.find((d: any) => getDayName(d).toLowerCase() === todayDayName.toLowerCase())
-    return ensureArray(todayDay?.meals).map(normalizeMeal)
-  })()
-
-  const eatenCount = todayMeals.filter((_, i) => todayLogs.find(l => l.meal_index === i)?.eaten).length
-
-  // -------------------- ACTIONS --------------------
-  const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
-    setTodayLogs(prev => {
-      const existing = prev.find(l => l.meal_index === mealIndex)
-      if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
-      return [...prev, { plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }]
-    })
-    try {
-      await fetch('/api/food-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }) })
-      const res = await fetch(`/api/food-log?date=${today}`)
-      if (res.ok) { const d = await res.json(); setStreak(d.streak || 0) }
-    } catch { /* silent */ }
-  }
-
-  const generateWeek = async (weekNum: number) => {
-    setGeneratingWeek(weekNum); setError(null)
-    try {
-      const res = await fetch('/api/meal-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: planFeedback.trim() }) })
-      const data = await res.json().catch(() => null)
-      if (res.ok && data?.success) {
-        await loadPlan() // Hard refresh syncs the Vault and removes the generate button!
-        setPlanFeedback('')
-      } else { setError(data?.error || 'Failed to generate plan') }
-    } catch { setError('An error occurred while generating.') } 
-    finally { setGeneratingWeek(null) }
-  }
-
-  const handleLogout = async () => {
-    try { await fetch('/api/logout', { method: 'POST' }) } catch {}
-    router.push('/login')
-  }
-
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
-
-  return (
-    <div className="min-h-screen bg-[#0c0c10] text-white relative pb-20">
-      
-      {/* Immersive Loading State */}
-      {generatingWeek !== null && <GeneratingScreen name={userName} week={generatingWeek} />}
-
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-md z-10">
-        <h1 className="text-xl font-extrabold tracking-tight cursor-pointer">
-          Aapka<span className="text-yellow-500">Coach</span>
-        </h1>
-        <div className="flex items-center gap-2">
-          <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">💳 Billing</button>
-          <button onClick={() => router.push('/dashboard/progress')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">📊 Progress</button>
-          <button onClick={() => router.push('/dashboard/profile')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">👤 Profile</button>
-          <button onClick={handleLogout} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">Logout</button>
-        </div>
-      </header>
-
-      <main className="max-w-3xl mx-auto px-4 md:px-6 pt-6 animate-in fade-in duration-500">
-        {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6 text-red-400 text-sm font-mono text-center">{error}</div>}
-
-        {/* TOP OVERVIEW - Compact and Clean */}
-        {!plan ? (
-          <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center my-12 shadow-2xl">
-            <div className="text-6xl mb-6 drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">🚀</div>
-            <h2 className="text-2xl font-bold mb-3 text-white">Generate Your Master Plan</h2>
-            <p className="text-gray-400 text-sm mb-8 leading-relaxed px-4">
-              We'll calculate your exact recomp macros, design your periodized workout splits, and arrange meals perfectly matching your dietary preferences.
-            </p>
-            <button 
-              onClick={() => generateWeek(1)} 
-              disabled={generatingWeek !== null} 
-              className="w-full sm:w-auto px-10 py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-2xl hover:bg-yellow-400 transition-all shadow-[0_0_20px_rgba(234,179,8,0.3)] disabled:opacity-50"
-            >
-              Generate Week 1 Plan
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
-                <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
-                <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
-                <button onClick={() => router.push('/dashboard/week')} className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors">
-                  View Full Diet Plan →
-                </button>
-              </div>
-              <div className="flex flex-col gap-4">
-                <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
-              </div>
-            </div>
-
-            {/* MACROS */}
-            <MacroRings plan={plan} todayLogs={todayLogs} todayDayName={todayDayName} />
-
-            {/* TODAY'S COMPACT CHECKLIST */}
-            {todayMeals.length > 0 && (
-              <div className="mb-12">
-                <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-2">
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2"><span>🎯</span> Today's Checklist</h2>
-                  <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
-                </div>
-                {todayMeals.map((meal, i) => (
-                  <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} />
-                ))}
-              </div>
-            )}
-
-            {/* TRANSFORMATION ROADMAP */}
-            <div className="mt-8">
-              <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2"><span>🗺️</span> Transformation Journey</h2>
-              <div className="space-y-4 relative">
-                {/* Connecting Line */}
-                <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-[#222230] -z-10"></div>
-                
-                {weeksArray.map(w => {
-                  // 1. COMPLETED WEEK
-                  if (w < planWeek) {
-                    return (
-                      <div key={w} className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-green-500/10 text-green-400 flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 border-4 border-[#0c0c10]">✓</div>
-                        <div className="flex-1 flex items-center justify-between p-4 bg-[#17171f] border border-[#222230] rounded-2xl opacity-75 hover:opacity-100 transition-opacity">
-                          <div><p className="font-bold text-white">Week {w}</p><p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-0.5">Completed</p></div>
-                          <button onClick={() => router.push('/dashboard/history')} className="px-4 py-2 bg-[#222230] text-gray-300 text-xs font-bold rounded-lg hover:bg-[#333] transition-colors">View Vault</button>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 2. ACTIVE WEEK
-                  if (w === planWeek && planWeek > 0) {
-                    return (
-                      <div key={w} className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-yellow-500 text-black flex items-center justify-center font-extrabold text-xl flex-shrink-0 z-10 border-4 border-[#0c0c10] shadow-[0_0_15px_rgba(234,179,8,0.4)]">⚡</div>
-                        <div className="flex-1 flex items-center justify-between p-5 bg-gradient-to-r from-[#1c1c26] to-[#17171f] border border-yellow-500/50 rounded-2xl shadow-lg">
-                          <div><p className="font-bold text-white text-lg">Week {w}</p><p className="text-[10px] text-yellow-500 font-mono uppercase tracking-widest mt-0.5">Current Plan</p></div>
-                          <button onClick={() => router.push('/dashboard/week')} className="px-5 py-2.5 bg-yellow-500 text-black text-xs font-extrabold rounded-lg hover:bg-yellow-400 shadow-md transition-all">View Plan</button>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 3. UNLOCKED (READY TO GENERATE)
-                  if (w > planWeek && w <= paidWeeks) {
-                    return (
-                      <div key={w} className="flex gap-4">
-                        <div className="w-12 h-12 rounded-full bg-[#17171f] text-gray-400 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 mt-2">🔓</div>
-                        <div className="flex-1 p-5 bg-[#17171f] border border-green-500/30 rounded-2xl shadow-xl">
-                          <div className="mb-4">
-                            <p className="font-bold text-white text-lg">Week {w}</p>
-                            <p className="text-[10px] text-green-400 font-mono uppercase tracking-widest mt-0.5">Unlocked & Ready</p>
-                          </div>
-                          <textarea value={planFeedback} onChange={e => setPlanFeedback(e.target.value)} placeholder="Optional: Add feedback for the AI before generating (e.g. less carbs, remove soya)..." className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-xs resize-none min-h-[70px] focus:border-yellow-500 outline-none mb-3" />
-                          <button onClick={() => generateWeek(w)} className="w-full py-3.5 bg-yellow-500 text-black font-extrabold rounded-xl hover:bg-yellow-400 shadow-md transition-all">🚀 Generate Week {w}</button>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 4. LOCKED
-                  return (
-                    <div key={w} className="flex items-center gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
-                      <div className="w-12 h-12 rounded-full bg-[#0c0c10] text-gray-600 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10">🔒</div>
-                      <div className="flex-1 flex items-center justify-between p-4 bg-[#0c0c10] border border-[#222230] rounded-2xl">
-                        <div><p className="font-bold text-white">Week {w}</p><p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-0.5">Locked</p></div>
-                        <button onClick={() => router.push('/dashboard/subscriptions')} className="px-4 py-2 bg-[#17171f] border border-[#222230] text-white text-xs font-bold rounded-lg hover:border-yellow-500 transition-colors">Unlock</button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </>
-        )}
-      </main>
-    </div>
+    }>
+      <WeekPlanContent />
+    </Suspense>
   )
 }
 </file>
@@ -4928,6 +4710,463 @@ export default function ProfileEditPage() {
         </div>
       </div>
 
+    </div>
+  )
+}
+</file>
+
+<file path="app/dashboard/page.tsx">
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { useEffect, useState, useCallback } from 'react'
+
+// -------------------- Types & Helpers --------------------
+interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
+
+function getDayName(d: any): string {
+  let name = String(d?.day_name || d?.day || '');
+  const numMatch = name.match(/^Day\s*(\d+)$/i) || name.match(/^(\d+)$/);
+  if (numMatch) {
+    const dayNum = parseInt(numMatch[1]);
+    if (dayNum >= 1 && dayNum <= 7) return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][dayNum - 1];
+  }
+  return name;
+}
+
+function ensureArray(val: any): any[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return [val];
+}
+
+function parseNum(val: any): number {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const match = String(val).match(/[\d.]+/);
+  return match ? parseFloat(match[0]) : 0;
+}
+
+// -------------------- Indestructible Normalizers --------------------
+function normalizeFood(raw: any) {
+  if (!raw || typeof raw !== 'object') return { name: String(raw || 'Food item'), quantity: '1 serving', kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 };
+  return {
+    name: raw.name || raw.item || raw.food || raw.Name || 'Food item',
+    quantity: raw.quantity || raw.amount || raw.qty || raw.Quantity || '1 serving',
+    protein_g: parseNum(raw.protein_g ?? raw.protein ?? raw.Protein),
+    carbs_g: parseNum(raw.carbs_g ?? raw.carbs ?? raw.Carbs),
+    fat_g: parseNum(raw.fat_g ?? raw.fat ?? raw.Fat),
+    fiber_g: parseNum(raw.fiber_g ?? raw.fiber ?? raw.Fiber),
+    kcal: parseNum(raw.kcal ?? raw.calories ?? raw.Calories ?? raw.Kcal),
+  };
+}
+
+function normalizeMeal(raw: any, index: number) {
+  if (!raw || typeof raw !== 'object') return { time: `Meal ${index + 1}`, name: String(raw || `Meal ${index + 1}`), kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, foods: [], tip: '' };
+  
+  let foods = ensureArray(raw.foods ?? raw.ingredients ?? raw.items).map(normalizeFood);
+  const name = raw.name || raw.Meal || raw.title || raw.Name || `Meal ${index + 1}`;
+  const kcal = parseNum(raw.kcal ?? raw.calories) || foods.reduce((acc, f) => acc + f.kcal, 0);
+  const protein_g = parseNum(raw.protein_g ?? raw.protein) || foods.reduce((acc, f) => acc + f.protein_g, 0);
+  const carbs_g = parseNum(raw.carbs_g ?? raw.carbs) || foods.reduce((acc, f) => acc + f.carbs_g, 0);
+  const fat_g = parseNum(raw.fat_g ?? raw.fat) || foods.reduce((acc, f) => acc + f.fat_g, 0);
+
+  if (foods.length === 0) foods = [{ name, quantity: '1 serving', protein_g, carbs_g, fat_g, kcal, fiber_g: 0 }];
+  return { time: raw.time || raw.Time || `Meal ${index + 1}`, name, kcal, protein_g, carbs_g, fat_g, foods, tip: raw.tip ?? raw.Tip ?? raw.note ?? '' };
+}
+
+// -------------------- Compact UI Components --------------------
+function CompactMealCard({ meal, mealIndex, todayLogs, onToggle }: any) {
+  const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
+  const eaten = log?.eaten ?? false
+
+  return (
+    <div className={`flex items-center justify-between p-4 border rounded-2xl mb-3 transition-all ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
+      <div className="flex items-center gap-4 w-full">
+        <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>
+          {eaten ? '✓' : ''}
+        </button>
+        <div className="flex-1">
+          <p className={`text-sm font-bold ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] bg-[#222230] text-gray-400 px-2 py-0.5 rounded font-mono">{meal.time}</span>
+            <span className="text-xs text-gray-500 font-mono"><span className="text-yellow-500 font-bold">{meal.kcal}</span> kcal · {meal.protein_g}g P</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AdherenceRing({ eaten, total, streak }: { eaten: number; total: number; streak: number }) {
+  const pct = total > 0 ? Math.round((eaten / total) * 100) : 0
+  const r = 28; const circ = 2 * Math.PI * r; const offset = circ - (pct / 100) * circ;
+  return (
+    <div className="flex items-center gap-4 bg-[#17171f] border border-[#222230] rounded-2xl px-5 py-4">
+      <div className="relative w-14 h-14">
+        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 70 70">
+          <circle cx="35" cy="35" r={r} stroke="#222230" strokeWidth="6" fill="none" />
+          <circle cx="35" cy="35" r={r} stroke={pct === 100 ? '#3dd68c' : pct >= 50 ? '#f4a623' : '#60a5fa'} strokeWidth="6" fill="none" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center text-xs font-extrabold font-mono text-white">{pct}%</span>
+      </div>
+      <div>
+        <p className="text-xs text-gray-500 font-mono uppercase tracking-wider">Today's Adherence</p>
+        <p className="text-sm font-bold text-white mt-0.5">{eaten} of {total} meals completed</p>
+        {streak > 0 && <p className="text-xs text-orange-400 font-mono mt-1">🔥 {streak} day streak</p>}
+      </div>
+    </div>
+  )
+}
+
+function MacroRing({ label, consumed, target, color }: { label: string; consumed: number; target: number; color: string }) {
+  const pct = target > 0 ? Math.min(100, Math.round((consumed / target) * 100)) : 0
+  const r = 24; const circ = 2 * Math.PI * r; const offset = circ - (pct / 100) * circ;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative w-16 h-16">
+        <svg className="w-16 h-16 -rotate-90" viewBox="0 0 60 60">
+          <circle cx="30" cy="30" r={r} stroke="#222230" strokeWidth="5" fill="none" />
+          <circle cx="30" cy="30" r={r} stroke={color} strokeWidth="5" fill="none" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.7s ease' }} />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center"><span className="text-[10px] font-extrabold text-white font-mono">{pct}%</span></div>
+      </div>
+      <div className="text-center">
+        <p className="text-[11px] font-bold font-mono" style={{ color }}>{consumed}g</p>
+        <p className="text-[9px] text-gray-500 uppercase tracking-wider font-mono mt-0.5">{label}</p>
+      </div>
+    </div>
+  )
+}
+
+function MacroRings({ plan, todayLogs, todayDayName }: { plan: any; todayLogs: FoodLog[]; todayDayName: string }) {
+  const days = ensureArray(plan?.weekly_meals)
+  const todayDay = days.find((d: any) => getDayName(d).toLowerCase() === todayDayName.toLowerCase())
+  const normalizedMeals = ensureArray(todayDay?.meals).map(normalizeMeal)
+
+  let consumedP = 0, consumedC = 0, consumedF = 0
+  normalizedMeals.forEach((meal, i) => {
+    if (todayLogs.find(l => l.meal_index === i)?.eaten) {
+      meal.foods.forEach((food) => { consumedP += food.protein_g || 0; consumedC += food.carbs_g || 0; consumedF += food.fat_g || 0; })
+    }
+  })
+
+  const targets = plan?.daily_macros || {}
+  return (
+    <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 mb-6 shadow-sm">
+      <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-3">
+        <p className="text-xs text-gray-400 uppercase tracking-widest font-mono">Macro Progress</p>
+        <span className="text-xs text-gray-600 font-mono">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>
+      </div>
+      <div className="flex justify-around">
+        <MacroRing label="Protein" consumed={Math.round(consumedP)} target={targets.protein_g || 0} color="#3dd68c" />
+        <MacroRing label="Carbs" consumed={Math.round(consumedC)} target={targets.carbs_g || 0} color="#60a5fa" />
+        <MacroRing label="Fat" consumed={Math.round(consumedF)} target={targets.fat_g || 0} color="#f4a623" />
+      </div>
+    </div>
+  )
+}
+
+// -------------------- FULL SCREEN IMMERSIVE LOADING --------------------
+function GeneratingScreen({ name, week }: { name: string; week: number }) {
+  const [stepIdx, setStepIdx] = useState(0)
+  const formattedName = name ? name.split(' ')[0] : 'your'
+
+  const STEPS = [
+    { icon: '⚖️', label: `Analyzing ${formattedName}'s weekly progress…` },
+    { icon: '🔥', label: `Recalculating macros & targets for Week ${week}…` },
+    { icon: '🥩', label: 'Setting exact food splits (Protein, Carbs, Fats)…' },
+    { icon: '🍱', label: `Structuring 7-day intelligent meal plan…` },
+    { icon: '🏋️', label: `Designing periodized workout split…` },
+    { icon: '🌙', label: 'Adding lifestyle & sleep protocols…' },
+    { icon: '🚀', label: 'Finalizing AapkaCoach Master Plan…' },
+  ]
+
+  useEffect(() => {
+    const t = setInterval(() => setStepIdx(i => Math.min(i + 1, STEPS.length - 1)), 3500)
+    return () => clearInterval(t)
+  }, [STEPS.length])
+  
+  const s = STEPS[stepIdx]
+  
+  return (
+    <div className="min-h-screen bg-[#0c0c10]/95 backdrop-blur-3xl text-white flex flex-col items-center justify-center gap-6 px-6 fixed inset-0 z-[100]">
+      <div className="text-7xl animate-bounce drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">{s.icon}</div>
+      <div className="text-center max-w-sm">
+        <p className="text-2xl font-bold font-mono text-white leading-relaxed">{s.label}</p>
+        <p className="text-sm text-yellow-500 mt-3 animate-pulse">DeepSeek AI is working. Do not close this tab.</p>
+      </div>
+      
+      <div className="w-full max-w-sm space-y-2.5 mt-8">
+        {STEPS.map((step, i) => (
+          <div key={i} className={`flex items-center gap-3 text-sm font-mono transition-all duration-300 ${i === stepIdx ? 'text-yellow-400 scale-105 origin-left' : i < stepIdx ? 'text-green-500' : 'text-gray-700'}`}>
+            <span className="w-5">{i < stepIdx ? '✓' : i === stepIdx ? '→' : '·'}</span>
+            <span className={i === stepIdx ? 'font-bold' : ''}>{step.label}</span>
+          </div>
+        ))}
+      </div>
+      
+      <div className="w-full max-w-sm bg-[#17171f] rounded-full h-2 border border-[#222230] mt-6 overflow-hidden">
+        <div className="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${Math.round(((stepIdx + 1) / STEPS.length) * 100)}%` }} />
+      </div>
+    </div>
+  )
+}
+
+// -------------------- MAIN DASHBOARD --------------------
+export default function DashboardPage() {
+  const router = useRouter()
+  const today = new Date().toISOString().split('T')[0]
+  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+
+  const [plan, setPlan] = useState<any>(null)
+  const [allPlans, setAllPlans] = useState<any[]>([]) // Used to accurately track Week #
+  const [profile, setProfile] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  
+  // Controls the immersive loading screen
+  const [generatingWeek, setGeneratingWeek] = useState<number | null>(null)
+  const [planFeedback, setPlanFeedback] = useState('')
+  
+  const [error, setError] = useState<string | null>(null)
+  const [userName, setUserName] = useState('Athlete')
+
+  const [todayLogs, setTodayLogs] = useState<FoodLog[]>([])
+  const [streak, setStreak] = useState(0)
+
+  // Sync state from Database
+  const loadPlan = async () => {
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/api/me')
+      if (!res.ok) { router.push('/login'); return }
+      const { user } = await res.json()
+      setUserName(user?.profile?.name || user?.email || 'Athlete')
+      setProfile(user?.profile || null)
+
+      // Fetch the actual current plan JSON
+      const planRes = await fetch('/api/meal-plan')
+      if (planRes.ok) {
+        const data = await planRes.json()
+        setPlan(data.plan || null)
+      } else { setPlan(null) }
+
+      // Fetch all plans to establish perfect week counts
+      const allPlansRes = await fetch('/api/meal-plans')
+      if (allPlansRes.ok) {
+        const data = await allPlansRes.json()
+        setAllPlans(data.plans || [])
+      }
+
+    } catch { setError('Failed to load your dashboard data.') }
+    finally { setLoading(false) }
+  }
+
+  const loadFoodLog = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/food-log?date=${today}`)
+      if (res.ok) { const data = await res.json(); setTodayLogs(data.logs || []); setStreak(data.streak || 0) }
+    } catch { /* silent */ }
+  }, [today])
+
+  useEffect(() => { loadPlan() }, [])
+  useEffect(() => { if (plan) loadFoodLog() }, [plan, loadFoodLog])
+
+  // -------------------- CORE LOGIC --------------------
+  // Calculate exactly which week we are on by counting the Vault records
+  const planWeek = allPlans.length > 0 ? allPlans.length : (plan ? 1 : 0)
+  const paidWeeks = profile?.paid_weeks ?? 1
+  
+  // The roadmap shows up to the next locked week
+  const totalVisibleWeeks = Math.max(planWeek, paidWeeks) + 1
+  const weeksArray = Array.from({ length: totalVisibleWeeks }, (_, i) => i + 1)
+
+  // Extract Dates from the Vault for accurate day counting
+  const latestPlanRecord = allPlans.length > 0 ? allPlans[0] : null;
+  const planStartDate = latestPlanRecord?.generated_at ? new Date(latestPlanRecord.generated_at) : null;
+  const planDayIndex = planStartDate
+    ? Math.min(7, Math.max(1, Math.floor((Date.now() - planStartDate.getTime()) / (24 * 60 * 60 * 1000)) + 1))
+    : 1
+  const daysLeft = planStartDate ? Math.max(0, 7 - (planDayIndex - 1)) : 7
+
+  const todayMeals = (() => {
+    const days = ensureArray(plan?.weekly_meals)
+    const todayDay = days.find((d: any) => getDayName(d).toLowerCase() === todayDayName.toLowerCase())
+    return ensureArray(todayDay?.meals).map(normalizeMeal)
+  })()
+
+  const eatenCount = todayMeals.filter((_, i) => todayLogs.find(l => l.meal_index === i)?.eaten).length
+
+  // -------------------- ACTIONS --------------------
+  const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
+    setTodayLogs(prev => {
+      const existing = prev.find(l => l.meal_index === mealIndex)
+      if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
+      return [...prev, { plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }]
+    })
+    try {
+      await fetch('/api/food-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }) })
+      const res = await fetch(`/api/food-log?date=${today}`)
+      if (res.ok) { const d = await res.json(); setStreak(d.streak || 0) }
+    } catch { /* silent */ }
+  }
+
+  const generateWeek = async (weekNum: number) => {
+    setGeneratingWeek(weekNum); setError(null)
+    try {
+      const res = await fetch('/api/meal-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: planFeedback.trim() }) })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.success) {
+        await loadPlan() // Hard refresh syncs the Vault and removes the generate button!
+        setPlanFeedback('')
+      } else { setError(data?.error || 'Failed to generate plan') }
+    } catch { setError('An error occurred while generating.') } 
+    finally { setGeneratingWeek(null) }
+  }
+
+  const handleLogout = async () => {
+    try { await fetch('/api/logout', { method: 'POST' }) } catch {}
+    router.push('/login')
+  }
+
+  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-yellow-500 flex items-center justify-center font-mono">Syncing Dashboard...</div>
+
+  return (
+    <div className="min-h-screen bg-[#0c0c10] text-white relative pb-20">
+      
+      {/* Immersive Loading State */}
+      {generatingWeek !== null && <GeneratingScreen name={userName} week={generatingWeek} />}
+
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230] sticky top-0 bg-[#0c0c10]/90 backdrop-blur-md z-10">
+        <h1 className="text-xl font-extrabold tracking-tight cursor-pointer">
+          Aapka<span className="text-yellow-500">Coach</span>
+        </h1>
+        <div className="flex items-center gap-2">
+          <button onClick={() => router.push('/dashboard/subscriptions')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">💳 Billing</button>
+          <button onClick={() => router.push('/dashboard/progress')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors hidden sm:inline">📊 Progress</button>
+          <button onClick={() => router.push('/dashboard/profile')} className="text-xs bg-[#17171f] hover:bg-yellow-500/10 border border-[#222230] text-gray-300 px-3 py-2 rounded-full transition-colors">👤 Profile</button>
+          <button onClick={handleLogout} className="text-xs bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 px-3 py-2 rounded-full transition-colors">Logout</button>
+        </div>
+      </header>
+
+      <main className="max-w-3xl mx-auto px-4 md:px-6 pt-6 animate-in fade-in duration-500">
+        {error && <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 mb-6 text-red-400 text-sm font-mono text-center">{error}</div>}
+
+        {/* TOP OVERVIEW - Compact and Clean */}
+        {!plan ? (
+          <div className="bg-[#17171f] border border-[#222230] rounded-3xl p-8 text-center my-12 shadow-2xl">
+            <div className="text-6xl mb-6 drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">🚀</div>
+            <h2 className="text-2xl font-bold mb-3 text-white">Generate Your Master Plan</h2>
+            <p className="text-gray-400 text-sm mb-8 leading-relaxed px-4">
+              We'll calculate your exact recomp macros, design your periodized workout splits, and arrange meals perfectly matching your dietary preferences.
+            </p>
+            <button 
+              onClick={() => generateWeek(1)} 
+              disabled={generatingWeek !== null} 
+              className="w-full sm:w-auto px-10 py-4 bg-yellow-500 text-black font-extrabold text-lg rounded-2xl hover:bg-yellow-400 transition-all shadow-[0_0_20px_rgba(234,179,8,0.3)] disabled:opacity-50"
+            >
+              Generate Week 1 Plan
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 shadow-sm flex flex-col justify-center">
+                <p className="text-xs text-gray-500 uppercase tracking-widest font-mono">Daily Fuel</p>
+                <p className="text-3xl font-extrabold text-white mt-1">{plan.daily_macros?.calories} <span className="text-sm font-normal text-gray-400">kcal</span></p>
+                <button onClick={() => router.push('/dashboard/week')} className="mt-4 text-xs font-bold text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20 py-2 rounded-lg w-full transition-colors">
+                  View Full Diet Plan →
+                </button>
+              </div>
+              <div className="flex flex-col gap-4">
+                <AdherenceRing eaten={eatenCount} total={todayMeals.length} streak={streak} />
+              </div>
+            </div>
+
+            {/* MACROS */}
+            <MacroRings plan={plan} todayLogs={todayLogs} todayDayName={todayDayName} />
+
+            {/* TODAY'S COMPACT CHECKLIST */}
+            {todayMeals.length > 0 && (
+              <div className="mb-12">
+                <div className="flex items-center justify-between mb-4 border-b border-[#222230] pb-2">
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2"><span>🎯</span> Today's Checklist</h2>
+                  <span className="text-xs text-gray-500 font-mono bg-[#17171f] border border-[#222230] px-2.5 py-1 rounded-md">{eatenCount}/{todayMeals.length}</span>
+                </div>
+                {todayMeals.map((meal, i) => (
+                  <CompactMealCard key={i} meal={meal} mealIndex={i} todayLogs={todayLogs} onToggle={toggleMealEaten} />
+                ))}
+              </div>
+            )}
+
+            {/* TRANSFORMATION ROADMAP */}
+            <div className="mt-8">
+              <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2"><span>🗺️</span> Transformation Journey</h2>
+              <div className="space-y-4 relative">
+                {/* Connecting Line */}
+                <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-[#222230] -z-10"></div>
+                
+                {weeksArray.map(w => {
+                  // 1. COMPLETED WEEK
+                  if (w < planWeek) {
+                    return (
+                      <div key={w} className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-green-500/10 text-green-400 flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 border-4 border-[#0c0c10]">✓</div>
+                        <div className="flex-1 flex items-center justify-between p-4 bg-[#17171f] border border-[#222230] rounded-2xl opacity-75 hover:opacity-100 transition-opacity">
+                          <div><p className="font-bold text-white">Week {w}</p><p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-0.5">Completed</p></div>
+                          <button onClick={() => router.push('/dashboard/history')} className="px-4 py-2 bg-[#222230] text-gray-300 text-xs font-bold rounded-lg hover:bg-[#333] transition-colors">View Vault</button>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // 2. ACTIVE WEEK
+                  if (w === planWeek && planWeek > 0) {
+                    return (
+                      <div key={w} className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-yellow-500 text-black flex items-center justify-center font-extrabold text-xl flex-shrink-0 z-10 border-4 border-[#0c0c10] shadow-[0_0_15px_rgba(234,179,8,0.4)]">⚡</div>
+                        <div className="flex-1 flex items-center justify-between p-5 bg-gradient-to-r from-[#1c1c26] to-[#17171f] border border-yellow-500/50 rounded-2xl shadow-lg">
+                          <div><p className="font-bold text-white text-lg">Week {w}</p><p className="text-[10px] text-yellow-500 font-mono uppercase tracking-widest mt-0.5">Current Plan</p></div>
+                          <button onClick={() => router.push('/dashboard/week')} className="px-5 py-2.5 bg-yellow-500 text-black text-xs font-extrabold rounded-lg hover:bg-yellow-400 shadow-md transition-all">View Plan</button>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // 3. UNLOCKED (READY TO GENERATE)
+                  if (w > planWeek && w <= paidWeeks) {
+                    return (
+                      <div key={w} className="flex gap-4">
+                        <div className="w-12 h-12 rounded-full bg-[#17171f] text-gray-400 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10 mt-2">🔓</div>
+                        <div className="flex-1 p-5 bg-[#17171f] border border-green-500/30 rounded-2xl shadow-xl">
+                          <div className="mb-4">
+                            <p className="font-bold text-white text-lg">Week {w}</p>
+                            <p className="text-[10px] text-green-400 font-mono uppercase tracking-widest mt-0.5">Unlocked & Ready</p>
+                          </div>
+                          <textarea value={planFeedback} onChange={e => setPlanFeedback(e.target.value)} placeholder="Optional: Add feedback for the AI before generating (e.g. less carbs, remove soya)..." className="w-full p-3 bg-[#0c0c10] border border-[#222230] rounded-xl text-white text-xs resize-none min-h-[70px] focus:border-yellow-500 outline-none mb-3" />
+                          <button onClick={() => generateWeek(w)} className="w-full py-3.5 bg-yellow-500 text-black font-extrabold rounded-xl hover:bg-yellow-400 shadow-md transition-all">🚀 Generate Week {w}</button>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // 4. LOCKED
+                  return (
+                    <div key={w} className="flex items-center gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
+                      <div className="w-12 h-12 rounded-full bg-[#0c0c10] text-gray-600 border border-[#222230] flex items-center justify-center font-bold text-lg flex-shrink-0 z-10">🔒</div>
+                      <div className="flex-1 flex items-center justify-between p-4 bg-[#0c0c10] border border-[#222230] rounded-2xl">
+                        <div><p className="font-bold text-white">Week {w}</p><p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-0.5">Locked</p></div>
+                        <button onClick={() => router.push('/dashboard/subscriptions')} className="px-4 py-2 bg-[#17171f] border border-[#222230] text-white text-xs font-bold rounded-lg hover:border-yellow-500 transition-colors">Unlock</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </main>
     </div>
   )
 }
