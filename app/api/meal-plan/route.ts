@@ -7,9 +7,10 @@ import { hashToken } from '@/lib/otp'
 const EDGE_FUNCTION_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/generate-plan`
 
 // ─────────────────────────────────────────────
-// GET  /api/meal-plan  — fetch the latest saved plan
+// GET  /api/meal-plan          — fetch the latest saved plan
+// GET  /api/meal-plan?id=uuid  — fetch a specific plan by ID
 // ─────────────────────────────────────────────
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const cookieStore = await cookies()
     const authToken = cookieStore.get('auth-token')?.value
@@ -32,13 +33,23 @@ export async function GET() {
       return res
     }
 
-    const { data: planRow, error: planError } = await supabaseAdmin
+    const url = new URL(req.url)
+    const planId = url.searchParams.get('id')
+
+    let query = supabaseAdmin
       .from('meal_plans')
-      .select('plan_json, generated_at')
+      .select('id, plan_json, generated_at, plan_week')
       .eq('user_id', session.user_id)
-      .order('generated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+
+    if (planId) {
+      // Fetch a specific plan by ID — also verify it belongs to this user
+      query = query.eq('id', planId)
+    } else {
+      // Fetch the latest plan
+      query = query.order('generated_at', { ascending: false }).limit(1)
+    }
+
+    const { data: planRow, error: planError } = await query.maybeSingle()
 
     if (planError) {
       console.error('Plan fetch error:', planError)
@@ -48,8 +59,15 @@ export async function GET() {
     if (!planRow) return NextResponse.json({ plan: null })
 
     const planJson = planRow.plan_json || {}
-    const planWeek = planJson.plan_week ?? null
-    return NextResponse.json({ plan: { ...planJson, plan_week: planWeek, generated_at: planRow.generated_at } })
+    const planWeek = planRow.plan_week ?? planJson.plan_week ?? null
+    return NextResponse.json({
+      plan: {
+        ...planJson,
+        plan_week: planWeek,
+        plan_id: planRow.id,
+        generated_at: planRow.generated_at,
+      }
+    })
   } catch (error) {
     console.error('GET /api/meal-plan error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -132,7 +150,6 @@ export async function POST(req: Request) {
 
     if (!edgeRes.ok) {
       console.error('Edge function error:', edgeRes.status, edgeData)
-      // TEMPORARY – show the real error in the browser
       return NextResponse.json(
         { error: edgeData?.error || 'Plan generation failed', details: edgeData },
         { status: edgeRes.status }

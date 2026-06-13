@@ -1,7 +1,7 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
 
 // ── Types & Helper Components ──
 interface FoodLog { plan_date: string; meal_index: number; meal_name: string; eaten: boolean }
@@ -75,16 +75,22 @@ function normalizeSession(raw: any) {
   return { day: raw.day || raw.Day || 'Training Day', name: raw.name || raw.type || raw.Type || 'Session', focus: raw.focus || raw.Focus || 'Training', exercises: ensureArray(raw.exercises ?? raw.Exercises).map(normalizeExercise) };
 }
 
-function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
+function MealCard({ meal, mealIndex, today, todayLogs, onToggle, isHistorical }: any) {
   const log = todayLogs.find((l: any) => l.meal_index === mealIndex)
   const eaten = log?.eaten ?? false
 
   return (
-    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${eaten ? 'bg-green-500/5 border-green-500/20' : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'}`}>
+    <div className={`border rounded-2xl p-5 mb-4 transition-all shadow-md ${
+      isHistorical
+        ? 'bg-[#17171f] border-[#222230]'
+        : eaten
+          ? 'bg-green-500/5 border-green-500/20'
+          : 'bg-[#17171f] border-[#222230] hover:border-yellow-500/30'
+    }`}>
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1">
           <span className="text-xs text-[#6b6b7e] uppercase tracking-[2px] font-mono bg-[#222230] px-2.5 py-1 rounded">{meal.time}</span>
-          <h3 className={`text-xl font-bold mt-2 ${eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
+          <h3 className={`text-xl font-bold mt-2 ${!isHistorical && eaten ? 'text-green-400' : 'text-white'}`}>{meal.name}</h3>
         </div>
         <div className="flex items-center gap-3 ml-4">
           <div className="text-right">
@@ -92,7 +98,15 @@ function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
             <span className="text-sm text-gray-500"> kcal</span>
             <p className="text-xs text-green-400 font-mono mt-1">{meal.protein_g}g protein</p>
           </div>
-          <button onClick={() => onToggle(mealIndex, meal.name, !eaten)} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400 scale-105' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}>{eaten ? '✓' : '○'}</button>
+          {/* Only show the eaten toggle for the current (non-historical) plan */}
+          {!isHistorical && (
+            <button
+              onClick={() => onToggle(mealIndex, meal.name, !eaten)}
+              className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg transition-all flex-shrink-0 ${eaten ? 'bg-green-500/20 border-green-500 text-green-400 scale-105' : 'border-[#333] text-gray-600 hover:border-green-500 hover:text-green-400'}`}
+            >
+              {eaten ? '✓' : '○'}
+            </button>
+          )}
         </div>
       </div>
       <div className="space-y-2">
@@ -109,13 +123,23 @@ function MealCard({ meal, mealIndex, today, todayLogs, onToggle }: any) {
           </div>
         ))}
       </div>
-      {meal.tip && <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong></div>}
+      {meal.tip && (
+        <div className="mt-4 text-xs text-gray-300 bg-[#1a1a24] border-l-2 border-yellow-500 pl-3 py-2.5 rounded-r-md">
+          💡 <strong className="text-gray-400 font-normal">{meal.tip}</strong>
+        </div>
+      )}
     </div>
   )
 }
 
-export default function WeekPlanPage() {
+// ── Inner page that uses useSearchParams (must be inside Suspense) ──
+function WeekPlanContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // If a planId is in the URL, we're viewing a historical plan
+  const planId = searchParams.get('planId')
+  const isHistorical = !!planId
+
   const [plan, setPlan] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [activeDay, setActiveDay] = useState(0)
@@ -127,16 +151,41 @@ export default function WeekPlanPage() {
   useEffect(() => {
     if (plan && plan.weekly_meals) {
       const daysArray = ensureArray(plan.weekly_meals)
-      const todayIndex = daysArray.findIndex((day: any) => getDayName(day).toLowerCase() === todayDayName.toLowerCase())
-      if (todayIndex !== -1) setActiveDay(todayIndex)
-      else setActiveDay(0) 
+      if (!isHistorical) {
+        // For the current plan, default to today's day
+        const todayIndex = daysArray.findIndex((day: any) => getDayName(day).toLowerCase() === todayDayName.toLowerCase())
+        if (todayIndex !== -1) setActiveDay(todayIndex)
+        else setActiveDay(0)
+      } else {
+        // For historical plans, default to Day 1
+        setActiveDay(0)
+      }
     }
-  }, [plan, todayDayName])
+  }, [plan, todayDayName, isHistorical])
 
-  useEffect(() => { fetchPlan(); fetchTodayLogs() }, [])
+  useEffect(() => {
+    fetchPlan()
+    if (!isHistorical) fetchTodayLogs()
+  }, [planId])
 
-  const fetchPlan = async () => { try { const res = await fetch('/api/meal-plan'); if (!res.ok) return; const data = await res.json(); setPlan(data.plan || null) } catch {} finally { setLoading(false) } }
-  const fetchTodayLogs = async () => { try { const res = await fetch(`/api/food-log?date=${today}`); if (res.ok) setTodayLogs((await res.json()).logs || []) } catch {} }
+  const fetchPlan = async () => {
+    try {
+      // If planId is provided, fetch that specific plan; otherwise fetch the latest
+      const url = planId ? `/api/meal-plan?id=${planId}` : '/api/meal-plan'
+      const res = await fetch(url)
+      if (!res.ok) return
+      const data = await res.json()
+      setPlan(data.plan || null)
+    } catch {}
+    finally { setLoading(false) }
+  }
+
+  const fetchTodayLogs = async () => {
+    try {
+      const res = await fetch(`/api/food-log?date=${today}`)
+      if (res.ok) setTodayLogs((await res.json()).logs || [])
+    } catch {}
+  }
 
   const toggleMealEaten = async (mealIndex: number, mealName: string, eaten: boolean) => {
     setTodayLogs(prev => {
@@ -144,11 +193,31 @@ export default function WeekPlanPage() {
       if (existing) return prev.map(l => l.meal_index === mealIndex ? { ...l, eaten } : l)
       return [...prev, { plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }]
     })
-    try { await fetch('/api/food-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten }) }) } catch {}
+    try {
+      await fetch('/api/food-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_date: today, meal_index: mealIndex, meal_name: mealName, eaten })
+      })
+    } catch {}
   }
 
-  if (loading) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">Loading plan...</div>
-  if (!plan) return <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center"><div className="text-center"><p className="text-gray-400 mb-4">No plan found</p><button onClick={() => router.push('/dashboard')} className="px-4 py-2 bg-yellow-500 text-black rounded-lg">← Back to Dashboard</button></div></div>
+  if (loading) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">
+      Loading plan...
+    </div>
+  )
+
+  if (!plan) return (
+    <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">
+      <div className="text-center">
+        <p className="text-gray-400 mb-4">No plan found</p>
+        <button onClick={() => router.push('/dashboard')} className="px-4 py-2 bg-yellow-500 text-black rounded-lg">
+          ← Back to Dashboard
+        </button>
+      </div>
+    </div>
+  )
 
   const days = ensureArray(plan.weekly_meals)
   const currentDay = days[activeDay] || {}
@@ -159,17 +228,40 @@ export default function WeekPlanPage() {
       <div className="mb-4 flex overflow-x-auto gap-2 pb-2">
         {days.map((day: any, idx: number) => {
           const dayStr = getDayName(day)
-          const isDayToday = dayStr.toLowerCase() === todayDayName.toLowerCase()
+          const isDayToday = !isHistorical && dayStr.toLowerCase() === todayDayName.toLowerCase()
           return (
-            <button key={idx} onClick={() => setActiveDay(idx)} className={`px-4 py-2 rounded-full font-semibold text-sm whitespace-nowrap transition-all relative ${idx === activeDay ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/20' : 'bg-[#17171f] text-gray-400 border border-[#222230] hover:border-yellow-500'}`}>
+            <button
+              key={idx}
+              onClick={() => setActiveDay(idx)}
+              className={`px-4 py-2 rounded-full font-semibold text-sm whitespace-nowrap transition-all relative ${
+                idx === activeDay
+                  ? 'bg-yellow-500 text-black shadow-lg shadow-yellow-500/20'
+                  : 'bg-[#17171f] text-gray-400 border border-[#222230] hover:border-yellow-500'
+              }`}
+            >
               {dayStr}
-              {isDayToday && <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full border border-[#0c0c10]" />}
+              {isDayToday && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full border border-[#0c0c10]" />
+              )}
             </button>
           )
         })}
       </div>
       <div className="pb-8 space-y-4">
-        {meals.length > 0 ? meals.map((meal, i) => <MealCard key={i} meal={meal} mealIndex={i} today={today} todayLogs={todayLogs} onToggle={toggleMealEaten} />) : <p className="text-gray-400 text-center py-8 border border-dashed border-[#222230] rounded-2xl">No meals planned for this day.</p>}
+        {meals.length > 0
+          ? meals.map((meal, i) => (
+              <MealCard
+                key={i}
+                meal={meal}
+                mealIndex={i}
+                today={today}
+                todayLogs={todayLogs}
+                onToggle={toggleMealEaten}
+                isHistorical={isHistorical}
+              />
+            ))
+          : <p className="text-gray-400 text-center py-8 border border-dashed border-[#222230] rounded-2xl">No meals planned for this day.</p>
+        }
       </div>
     </div>
   )
@@ -181,17 +273,27 @@ export default function WeekPlanPage() {
       <div className="space-y-6 pb-8">
         <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
           <h2 className="text-lg font-bold text-yellow-500 mb-2 font-mono uppercase tracking-wide">Split Overview</h2>
-          <p className="text-sm text-gray-300 leading-relaxed"><strong>Training Schedule:</strong> {workout.split || workout.frequency || 'Custom Split'} <br /><strong>Philosophy:</strong> {workout.philosophy || 'Follow progressive overload and prioritize form over weight.'}</p>
+          <p className="text-sm text-gray-300 leading-relaxed">
+            <strong>Training Schedule:</strong> {workout.split || workout.frequency || 'Custom Split'}{' '}
+            <br /><strong>Philosophy:</strong> {workout.philosophy || 'Follow progressive overload and prioritize form over weight.'}
+          </p>
         </div>
         <div className="grid md:grid-cols-2 gap-4">
           {sessions.map((session: any, idx: number) => (
             <div key={idx} className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 hover:border-yellow-500/25 transition-all">
-              <h3 className="text-lg font-bold text-white mb-1 border-b border-[#222230] pb-2 font-mono">{session.day}: {session.name || session.type}</h3>
+              <h3 className="text-lg font-bold text-white mb-1 border-b border-[#222230] pb-2 font-mono">
+                {session.day}: {session.name || session.type}
+              </h3>
               <p className="text-xs text-yellow-500 uppercase tracking-widest font-mono mb-4">{session.focus}</p>
               <div className="space-y-4">
                 {ensureArray(session.exercises).map((ex: any, i: number) => (
                   <div key={i} className="text-sm flex flex-col border-b border-[#222230]/50 pb-3 last:border-b-0 last:pb-0">
-                    <div className="flex justify-between items-start"><span className="font-semibold text-gray-200">{ex.name}</span><span className="text-yellow-500 font-mono text-xs bg-yellow-500/10 px-2 py-0.5 rounded whitespace-nowrap">{ex.sets}s × {ex.reps}r</span></div>
+                    <div className="flex justify-between items-start">
+                      <span className="font-semibold text-gray-200">{ex.name}</span>
+                      <span className="text-yellow-500 font-mono text-xs bg-yellow-500/10 px-2 py-0.5 rounded whitespace-nowrap">
+                        {ex.sets}s × {ex.reps}r
+                      </span>
+                    </div>
                     {ex.tip && <span className="text-xs text-gray-400 mt-1 italic">💡 {ex.tip}</span>}
                   </div>
                 ))}
@@ -208,21 +310,61 @@ export default function WeekPlanPage() {
     return (
       <div className="space-y-6 pb-8">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center"><p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Sleep Target</p><p className="text-xl font-extrabold text-blue-400">{rules.sleep_hours || '7-8 hours'}</p></div>
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center"><p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Water</p><p className="text-xl font-extrabold text-cyan-400">{rules.water_liters || rules.water_target || '3.5 L'}</p></div>
-          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center"><p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Steps</p><p className="text-xl font-extrabold text-green-400">{typeof rules.steps_daily === 'number' ? rules.steps_daily.toLocaleString() : (rules.daily_steps || rules.steps_target || '10,000')}</p></div>
+          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Sleep Target</p>
+            <p className="text-xl font-extrabold text-blue-400">{rules.sleep_hours || '7-8 hours'}</p>
+          </div>
+          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Water</p>
+            <p className="text-xl font-extrabold text-cyan-400">{rules.water_liters || rules.water_target || '3.5 L'}</p>
+          </div>
+          <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5 text-center">
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-mono">Daily Steps</p>
+            <p className="text-xl font-extrabold text-green-400">
+              {typeof rules.steps_daily === 'number'
+                ? rules.steps_daily.toLocaleString()
+                : (rules.daily_steps || rules.steps_target || '10,000')}
+            </p>
+          </div>
         </div>
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
             <h3 className="text-lg font-bold text-red-400 mb-3 font-mono border-b border-[#222230] pb-2">Foods to Avoid</h3>
-            <ul className="list-disc pl-5 text-sm text-gray-300 space-y-2">{ensureArray(rules.avoid_list).map((item: string, i: number) => <li key={i} className="leading-relaxed">{item}</li>)}</ul>
+            <ul className="list-disc pl-5 text-sm text-gray-300 space-y-2">
+              {ensureArray(rules.avoid_list).map((item: string, i: number) => (
+                <li key={i} className="leading-relaxed">{item}</li>
+              ))}
+            </ul>
           </div>
           <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
             <h3 className="text-lg font-bold text-yellow-500 mb-3 font-mono border-b border-[#222230] pb-2">Guidelines & Protocols</h3>
             <div className="space-y-4">
-              {rules.refeed_day && <div><h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono">Refeed Strategy</h4><p className="text-sm text-gray-200 mt-1 leading-relaxed">{rules.refeed_day}</p></div>}
-              {rules.stress_management && <div><h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Stress Management</h4><ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">{ensureArray(rules.stress_management).map((tip: string, i: number) => <li key={i} className="leading-relaxed">{tip}</li>)}</ul></div>}
-              {rules.recovery_tips && <div><h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Recovery Protocols</h4><ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">{ensureArray(rules.recovery_tips).map((tip: string, i: number) => <li key={i} className="leading-relaxed">{tip}</li>)}</ul></div>}
+              {rules.refeed_day && (
+                <div>
+                  <h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono">Refeed Strategy</h4>
+                  <p className="text-sm text-gray-200 mt-1 leading-relaxed">{rules.refeed_day}</p>
+                </div>
+              )}
+              {rules.stress_management && (
+                <div>
+                  <h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Stress Management</h4>
+                  <ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">
+                    {ensureArray(rules.stress_management).map((tip: string, i: number) => (
+                      <li key={i} className="leading-relaxed">{tip}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {rules.recovery_tips && (
+                <div>
+                  <h4 className="text-xs text-gray-400 uppercase tracking-wider font-mono mb-2">Recovery Protocols</h4>
+                  <ul className="list-disc pl-5 text-xs text-gray-300 space-y-1.5">
+                    {ensureArray(rules.recovery_tips).map((tip: string, i: number) => (
+                      <li key={i} className="leading-relaxed">{tip}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -230,28 +372,97 @@ export default function WeekPlanPage() {
     )
   }
 
+  const planWeekNum = plan.plan_week
+
   return (
     <div className="min-h-screen bg-[#0c0c10] text-white">
       <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-[#222230]">
         <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-400 hover:text-yellow-500">← Dashboard</button>
+          <button
+            onClick={() => isHistorical ? router.push('/dashboard/history') : router.push('/dashboard')}
+            className="text-sm text-gray-400 hover:text-yellow-500"
+          >
+            ← {isHistorical ? 'History' : 'Dashboard'}
+          </button>
           <span className="text-gray-600">/</span>
-          <h1 className="text-lg font-extrabold">Week Plan</h1>
+          <h1 className="text-lg font-extrabold">
+            {planWeekNum ? `Week ${planWeekNum} ` : ''}Plan
+          </h1>
+          {isHistorical && (
+            <span className="text-xs bg-[#222230] text-gray-400 px-2 py-1 rounded font-mono">
+              ARCHIVED
+            </span>
+          )}
         </div>
-        {plan?.generated_at && <div className="text-xs text-gray-500 font-mono">📅 {new Date(plan.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>}
+        <div className="flex items-center gap-3">
+          {isHistorical && (
+            // Quick link to go to current plan
+            <button
+              onClick={() => router.push('/dashboard/week')}
+              className="text-xs bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-3 py-1.5 rounded-full font-mono hover:bg-yellow-500/20 transition-colors"
+            >
+              View Current Plan →
+            </button>
+          )}
+          {plan?.generated_at && (
+            <div className="text-xs text-gray-500 font-mono">
+              📅 {new Date(plan.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </div>
+          )}
+        </div>
       </header>
+
       <main className="max-w-5xl mx-auto px-4 md:px-6 py-6">
+        {/* Historical plan banner */}
+        {isHistorical && (
+          <div className="mb-6 p-4 bg-[#17171f] border border-[#222230] rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📚</span>
+              <div>
+                <p className="font-semibold text-white text-sm">
+                  You're viewing Week {planWeekNum || ''} (archived)
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Meal tracking is only available for the current active plan.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex border-b border-[#222230] mb-6">
           {(['meals', 'workouts', 'lifestyle'] as const).map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3.5 font-bold text-sm transition-all border-b-2 capitalize ${activeTab === tab ? 'border-yellow-500 text-yellow-500 bg-yellow-500/5' : 'border-transparent text-gray-400 hover:text-white'}`}>
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 py-3.5 font-bold text-sm transition-all border-b-2 capitalize ${
+                activeTab === tab
+                  ? 'border-yellow-500 text-yellow-500 bg-yellow-500/5'
+                  : 'border-transparent text-gray-400 hover:text-white'
+              }`}
+            >
               {tab === 'meals' ? '🍽️ Diet Plan' : tab === 'workouts' ? '💪 Workout Split' : '🌙 Lifestyle & Rules'}
             </button>
           ))}
         </div>
+
         {activeTab === 'meals' && renderMealsContent()}
         {activeTab === 'workouts' && renderWorkoutsContent()}
         {activeTab === 'lifestyle' && renderLifestyleContent()}
       </main>
     </div>
+  )
+}
+
+// Wrap in Suspense because useSearchParams requires it in Next.js app router
+export default function WeekPlanPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0c0c10] text-white flex items-center justify-center">
+        Loading plan...
+      </div>
+    }>
+      <WeekPlanContent />
+    </Suspense>
   )
 }

@@ -6,10 +6,11 @@ import { useEffect, useState } from 'react'
 interface PlanSummary {
   id: string
   generated_at: string
+  plan_week: number
   plan_json: {
     daily_macros?: { calories: number; protein_g: number; carbs_g: number; fat_g: number }
     weekly_meals?: any[]
-    workout_plan?: { split: string; days_per_week: number }
+    workout_plan?: { split: string; days_per_week: number; sessions?: any[] }
   }
 }
 
@@ -18,7 +19,6 @@ export default function HistoryPage() {
   const [plans, setPlans] = useState<PlanSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [activePlan, setActivePlan] = useState<string | null>(null)
-  const [restoring, setRestoring] = useState(false)
 
   useEffect(() => { fetchPlans() }, [])
 
@@ -37,11 +37,9 @@ export default function HistoryPage() {
     }
   }
 
-  const restorePlan = async (planId: string) => {
-    // The "latest" plan is always what the dashboard shows.
-    // To restore an old plan, we just navigate to dashboard (user can see any day).
-    setActivePlan(planId)
-    router.push('/dashboard')
+  // Navigate to the week view for this specific plan
+  const viewPlan = (planId: string) => {
+    router.push(`/dashboard/week?planId=${planId}`)
   }
 
   if (loading) return (
@@ -83,6 +81,7 @@ export default function HistoryPage() {
               {plans.map((plan, i) => {
                 const date = new Date(plan.generated_at)
                 const isActive = plan.id === activePlan
+                const weekNum = plan.plan_week || (plans.length - i)
                 return (
                   <button
                     key={plan.id}
@@ -96,10 +95,10 @@ export default function HistoryPage() {
                     <div className="flex items-start justify-between">
                       <div>
                         <p className="text-sm font-semibold text-white">
-                          {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          Week {weekNum}
                         </p>
                         <p className="text-xs text-gray-500 font-mono mt-0.5">
-                          {date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                          {date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                         </p>
                       </div>
                       {i === 0 && (
@@ -121,7 +120,9 @@ export default function HistoryPage() {
               <div className="md:col-span-2 space-y-4">
                 <div className="bg-[#17171f] border border-[#222230] rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="font-bold text-white">Plan Details</h2>
+                    <h2 className="font-bold text-white">
+                      Week {selected.plan_week || plans.findIndex(p => p.id === selected.id) + 1} Details
+                    </h2>
                     <span className="text-xs text-gray-500 font-mono">
                       {new Date(selected.generated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
                     </span>
@@ -149,8 +150,18 @@ export default function HistoryPage() {
                   {selected.plan_json?.workout_plan && (
                     <div className="bg-[#0c0c10] border border-[#222230] rounded-xl p-4 mb-4">
                       <p className="text-xs text-gray-500 uppercase tracking-wider font-mono mb-2">Workout Split</p>
-                      <p className="text-white font-semibold">{selected.plan_json.workout_plan.split}</p>
-                      <p className="text-sm text-gray-400 mt-1">{selected.plan_json.workout_plan.days_per_week} days / week</p>
+                      <p className="text-white font-semibold">
+                        {selected.plan_json.workout_plan.split ||
+                          (Array.isArray(selected.plan_json.workout_plan.sessions)
+                            ? `${selected.plan_json.workout_plan.sessions.length}-day split`
+                            : 'Custom Split')}
+                      </p>
+                      <p className="text-sm text-gray-400 mt-1">
+                        {selected.plan_json.workout_plan.days_per_week ||
+                          (Array.isArray(selected.plan_json.workout_plan.sessions)
+                            ? selected.plan_json.workout_plan.sessions.length
+                            : '5')} days / week
+                      </p>
                     </div>
                   )}
 
@@ -178,12 +189,12 @@ export default function HistoryPage() {
                   )}
                 </div>
 
-                {/* Action to go to dashboard with this plan */}
+                {/* ✅ THE FIX: Navigate to the week view with this specific plan's ID */}
                 <button
-                  onClick={() => router.push('/dashboard')}
+                  onClick={() => viewPlan(selected.id)}
                   className="w-full py-3 bg-yellow-500 text-black font-extrabold rounded-xl hover:bg-yellow-400 transition-colors"
                 >
-                  View Full Plan on Dashboard →
+                  View Full Week {selected.plan_week || plans.findIndex(p => p.id === selected.id) + 1} Plan →
                 </button>
               </div>
             )}
